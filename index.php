@@ -2,21 +2,116 @@
 
 /*
 
- Pattern: Gents room by doc_w, http://colourlovers.com.s3.amazonaws.com/images/patterns/772/772174.png?1267838201076 
+Tiny dropbox script
+-------------------
+
+Written by Einar Lielmanis, http://spicausis.lv
+Bugs, thanks, suggestions: einar@spicausis.lv
+
  */
-?>
+
+$settings = array(
+
+    'custom_stylesheet' => null,
+
+    );
+
+
+process_action(get('action'));
+
+
+
+
+
+
+
+
+function process_action($action)
+{
+    $site = array(
+        ''                   => 'draw_page_index',
+        'default_stylesheet' => 'draw_default_stylesheet',
+    );
+    if ( ! isset($site[$action])) {
+        // 404 would be better, but default to index now
+        $action = null;
+    }
+    call_user_func($site[$action]);
+}
+
+
+
+
+function draw_html_header()
+{
+
+    echo <<<HTML
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <title>Tiny dropbox</title>
-    <style type="text/css">
+HTML;
+
+    draw_stylesheets();
+
+    echo '</head>';
+    echo '<body>';
+    echo '<div id="wrapper">';
+
+}
+
+
+function draw_html_footer()
+{
+
+    echo '<div class="push"></div>';
+    echo '</div>';
+    printf('<div id="footer"><p>%s</p></div>',
+        'Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.'
+        );
+    echo '</body></html>';
+}
+
+
+function draw_stylesheets()
+{
+    $default_stylesheet = '?action=default_stylesheet&amp;time=' . date('Y_m_d-H_i', filemtime(__FILE__));
+    $stylesheet = get_setting('custom_stylesheet', $default_stylesheet);
+    if ($stylesheet) {
+        printf('<link rel="stylesheet" href="%s" media="all" />', $stylesheet);
+    }
+
+}
+
+
+function get_setting($name, $default = null)
+{
+    global $settings;
+    if ( ! isset($settings[$name]) or ! $settings[$name]) {
+        return $default;
+    }
+    return $settings[$name];
+}
+
+function get($name)
+{
+    $value = isset($_GET[$name]) ? $_GET[$name] : null;
+    $value = ($value === Null and isset($_POST[$name])) ? $_POST[$name] : $value;
+    return $value === Null ? Null : trim($value);
+}
+
+
+function draw_default_stylesheet()
+{
+    header('Content-type: text/css; charset=utf-8');
+    echo <<<CSS
 * { 
     margin: 0;
     padding: 0;
 }
 body {
-    background: #ccb url(images/pattern.png) repeat;
+    background: #ccb url(images/pattern.gif) repeat;
 }
 body, html {
     height: 100%;
@@ -142,62 +237,11 @@ a {
 a.delete {
     color: #f03;
 }
-    </style>
-</head>
-<body>
-    <div id="wrapper">
-    <h1>Failu <strong>pastkastītes makets</strong></h1>
-
-    <div class="file form">
-        <h2><strong>Pievieno</strong> savu failu:</h2>
-        <p class="error">Failu ielādēt <strong>neizdevās</strong>. Iespējams, ka pietrūka vietas.</p>
-        <form method="post" action="?">
-            <input name="file" type="file" /><br />
-            <label for="description" id="description">Vieta nelielam aprakstam:</label>
-            <textarea name="description"></textarea><br /> 
-            <button type="submit"><strong>Ielādē</strong> un nosūti failu</button>
-        </form>
-    </div>
-    <div class="file">
-        <ul>
-            <li><a href="#">pielabot aprakstu</a></li>
-            <li><a class="delete" href="#">izdzēst</a></li>
-        </ul>
-        <h2><a href="#">Bazalts.zip</a> <em>2 MB</em></h2>
-        <div class="description">Te ir tas arhīvs, ko vēlējies.<br />Apraksts, protams, var būt arī vairākās rindās.<br />Un kā tas tad izskatīsies?</div>
-    </div>
-    <div class="file">
-        <ul>
-            <li><a href="#">izveidot aprakstu</a></li>
-            <li><a class="delete" href="#">izdzēst</a></li>
-        </ul>
-        <h2><a href="#">jubalts.dat</a> <em>4 MB</em></h2>
-    </div>
-    <div class="file">
-        <ul>
-            <li><a href="#">pielabot aprakstu</a></li>
-            <li><a class="delete" href="#">izdzēst</a></li>
-        </ul>
-        <h2><a href="#">IMGDC00123.JPG</a> <em>20 KB</em></h2>
-        <div class="description">Klausies hujausies, te ir solītās sīkpakas, viss ir kruta tagad, vai ne?</div>
-    </div>
-
-    <div class="file">
-        <ul>
-            <li><a href="#">pielabot aprakstu</a></li>
-            <li><a class="delete" href="#">izdzēst</a></li>
-        </ul>
-        <h2><a href="#">blablabla.doc</a> <em>40 KB</em></h2>
-        <form method="post" action="?">
-        <label>Vari pielabot aprakstu:</label>
-        <textarea>Apraksta labošanas formas izskats</textarea>
-        <button type="submit">Saglabāt izmaiņas</button>
-        </form>
-    </div>
-
-    <div class="push"></div>
-    </div>
-    <div id="footer"><p>Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.</p></div>
-</body>
-</html>
-
+CSS;
+    exit;
+}
+function draw_page_index()
+{
+    draw_html_header();
+    draw_html_footer();
+}
