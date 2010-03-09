@@ -164,6 +164,7 @@ div.file h2 em {
     font-weight: bold;
     color: #bbb;
 }
+div#introduction,
 div.file div.description {
     color: #777;
     font-size: 12px;
@@ -171,14 +172,21 @@ div.file div.description {
     line-height: 150%;
     width: 700px;
 }
+div#introduction {
+    padding-left: 4px;
+}
 input {
     margin-bottom: 4px;
+    font-family: arial, sans-serif;
+    font-size: 12px;
+    padding: 2px;
 }
 textarea {
     width: 700px;
     height: 100px;
     padding: 2px;
     font-family: arial, sans-serif;
+    font-size: 12px;
     margin-bottom: 4px;
 }
 button {
@@ -276,6 +284,11 @@ function on_page_index()
 
     if ( ! is_owner_mode()) {
         if (get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0) {
+
+            if (sizeof(get_visible_uploads()) == 0) {
+                draw_introduction();
+            }
+
             draw_upload_form();
         } else {
             draw_success_box();
@@ -306,6 +319,9 @@ function on_config()
             $setup['title'] = $title;
         }
 
+        $introduction = get('introduction');
+        $setup['introduction'] = $introduction;
+
         $css = get('custom_stylesheet');
         $setup['custom_stylesheet'] = $css;
 
@@ -326,6 +342,10 @@ function on_config()
 
     printf('<label for="i_title">Lapas virsraksts</label><input id="i_title" name="title" value="%s" /><br />',
         htmlspecialchars($setup['title']));
+
+    printf('<label for="i_intro">Lapas ievadteksts</label><textarea id="i_introduction" name="introduction">%s</textarea><br />',
+        htmlspecialchars($setup['introduction']));
+
 
     printf('<label for="i_css">Ārējā CSS saite</label><input id="i_css" name="custom_stylesheet" value="%s" /><br />',
         htmlspecialchars($setup['custom_stylesheet']));
@@ -409,7 +429,7 @@ function on_download()
     $entry = safely_get_file_entry(get_int('id'));
     header('Content-Type: ' . $entry['type']);
     header('Content-Length: ' . $entry['size']);
-    header('Content-Disposition: attachment; filename=' . $entry['original_name']);
+    header('Content-Disposition: attachment; filename="' . str_replace('"', '', $entry['original_name']) . '"');
     readfile(get_storage_folder() . '/' . $entry['name']);
     exit;
 }
@@ -497,6 +517,13 @@ function draw_stylesheets()
 
 
 
+function draw_introduction()
+{
+    $setup = get_setup();
+    if ($setup['introduction']) {
+        printf('<div id="introduction">%s</div>', nl2br($setup['introduction']));
+    }
+}
 function login_owner($password)
 {
     if ($password) {
@@ -638,6 +665,12 @@ function draw_visible_uploads()
             }
 
             echo '</div>';
+        }
+
+        if ( ! sizeof($all)) {
+
+            echo '<div class="file"><h2>Nekas nav atsūtīts.</h2></div>';
+
         }
 
     } else {
@@ -791,7 +824,7 @@ function append_to_uploads($entry, $tmp_file)
 
 function get_setup_file_name()
 {
-    return get_storage_folder() . '/.setup.serialized';
+    return get_storage_folder() . '/.setup';
 }
 
 function get_setup()
@@ -810,6 +843,7 @@ function get_default_setup()
         'title' => 'failu <strong>pastkastīte</strong>',
         'password' => 'master',
         'custom_stylesheet' => null,
+        'introduction' => 'Izmantojot šo lapu, vari nosūtīt man savus failus.',
         'uploads' => array(),
     );
 }
@@ -866,7 +900,7 @@ function safely_get_file_entry($id)
 #
 function format_size($bytes)
 {
-    if ($bytes < 10000000) {
+    if ($bytes < 1000000) {
         return sprintf('%.1f KB', $bytes / 1000);
     }
     return sprintf('%.1f MB', $bytes / 1000000);
