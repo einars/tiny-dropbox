@@ -19,11 +19,15 @@ function process_action($action)
 {
     $handlers = array(
         ''                   => 'on_page_index',
+        'owner-login'        => 'on_owner_login',
+        'owner-logout'       => 'on_owner_logout',
+
         'default_stylesheet' => 'on_default_stylesheet',
         'upload'             => 'on_upload',
         'delete'             => 'on_delete',
         'download'           => 'on_download',
         'save-edit'          => 'on_save_edit',
+        'config'             => 'on_config',
     );
 
     if ( ! isset($handlers[$action])) {
@@ -46,7 +50,18 @@ function process_action($action)
 
 function on_default_stylesheet()
 {
-    header('Content-type: text/css; charset=utf-8');
+    $mtime = filemtime(__FILE__);
+    $etag = $mtime;
+
+    header('Content-Type: text/css; charset=utf-8');
+    header('Etag: ' . $etag);
+    header('Last-Modified: ' . date('r', $mtime));
+
+    if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] == $etag) {
+        header('HTTP/1.1 304 Not Modified');
+        exit;
+    }
+
     echo <<<CSS
 * { 
     margin: 0;
@@ -91,6 +106,9 @@ div#footer p {
 div#footer a {
     color: #999;
 }
+div#footer a.owner {
+    color: #545142;
+}
 div#footer a:hover {
     color: #545142;
 }
@@ -103,8 +121,12 @@ h1 {
     border-bottom: 1px solid #f03;
     margin-bottom: 20px;
 }
+h1 a {
+    text-decoration: none;
+    color: #f03;
+}
 div.file {
-    border-top: 3px solid #ccb;
+    border-top: 3px solid #ddc;
     margin: 10px 0;
     padding: 10px 20px 10px 20px;
     background-color: #f4f4ef
@@ -121,6 +143,20 @@ div.file h2 {
     font-weight: normal;
     margin-bottom: 10px;
     color: #545142;
+}
+.owner-login label {
+    font-size: 20px;
+    letter-spacing: -1px;
+    font-weight: normal;
+    color: #545142;
+    padding-right: 10px;
+}
+.owner-login button {
+    width: 220px;
+    padding: 10px 0;
+}
+.owner-login input {
+    padding: 2px;
 }
 div.file h2 em {
     font-size: 12px;
@@ -173,6 +209,7 @@ p.error {
 .file li {
     display: inline;
     padding-left: 4px;
+    color: #777;
 }
 a {
     color: #545142;
@@ -191,19 +228,117 @@ p.success a {
     font-weight: normal;
     color: #65803A;
 }
+.config label {
+    width: 150px;
+    float: left;
+    clear: left;
+}
+.config input {
+    width: 300px;
+}
+.config button {
+    margin-left: 150px;
+}
 CSS;
     exit;
 }
+function on_owner_login()
+{
+    if (login_owner(get('password'))) {
+        redirect('?');
+    }
+
+    draw_html_header();
+    draw_owner_login();
+    draw_html_footer();
+}
+
+
+function on_owner_logout()
+{
+    if (is_owner_mode()) {
+
+        $setup = get_setup();
+        $setup['owner-session'] = null;
+        $setup['owner-ip'] = null;
+        save_setup($setup);
+
+    }
+    redirect('?');
+}
+
+
 function on_page_index()
 {
     draw_html_header();
 
     remove_stale_upload();
 
-    draw_upload_form();
+    if ( ! is_owner_mode()) {
+        if (get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0) {
+            draw_upload_form();
+        } else {
+            draw_success_box();
+        }
+    }
+
     draw_visible_uploads();
 
     draw_html_footer();
+}
+
+function on_config()
+{
+    if ( ! is_owner_mode()) {
+        redirect('?');
+    }
+
+    $setup = get_setup();
+
+    if (get('save')) {
+        $password = get('password');
+        if ($password) {
+            $setup['password'] = $password;
+        }
+
+        $title = get('title');
+        if ($title) {
+            $setup['title'] = $title;
+        }
+
+        $css = get('custom_stylesheet');
+        $setup['custom_stylesheet'] = $css;
+
+        save_setup($setup);
+        redirect('?');
+    }
+
+    draw_html_header();
+
+
+    echo '<div class="file form config">';
+
+    echo '<form method="post" action="?">';
+
+    echo '<input type="hidden" name="action" value="config" />';
+    echo '<input type="hidden" name="save" value="yes" />';
+    printf('<label for="i_password">Jaunā parole:</label><input id="i_password" name="password" /><br />');
+
+    printf('<label for="i_title">Lapas virsraksts</label><input id="i_title" name="title" value="%s" /><br />',
+        htmlspecialchars($setup['title']));
+
+    printf('<label for="i_css">Ārējā CSS saite</label><input id="i_css" name="custom_stylesheet" value="%s" /><br />',
+        htmlspecialchars($setup['custom_stylesheet']));
+
+    echo '<button type="submit">Saglabāt izmaiņas</button>';
+    echo '</form>';
+
+    echo '</div>';
+
+    js_focus_to('i_password');
+
+    draw_html_footer();
+
 }
 
 function on_setup_required()
@@ -243,7 +378,7 @@ function on_upload()
         'size' => $file['size'],
         'name' => $file['name'],
         'description' => get('description'),
-        );
+    );
 
     if (is_already_uploaded($entry)) {
         draw_index_with_error('Šāds fails te <strong>jau ir ielādēts,</strong> paldies.');
@@ -302,12 +437,17 @@ function draw_html_header()
     $setup = get_setup();
     $title = $setup['title'];
 
-    echo <<<HTML
-<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head>
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-HTML;
+    if (is_owner_mode()) {
+        $title .= ', pārvaldīšana';
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+
+    echo '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">';
+    echo '<html xmlns="http://www.w3.org/1999/xhtml">';
+    echo '<head>';
+    echo '<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />';
+
 
     printf('<title>%s</title>', strip_tags($title));
 
@@ -317,7 +457,7 @@ HTML;
     echo '<body>';
     echo '<div id="wrapper">';
 
-    printf('<h1>%s</h1>', $title);
+    printf('<h1><a href="?">%s</a></h1>', $title);
 
 }
 
@@ -327,9 +467,15 @@ function draw_html_footer()
 
     echo '<div class="push"></div>';
     echo '</div>';
-    printf('<div id="footer"><p>%s</p></div>',
-        'Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.'
-        );
+    echo '<div id="footer"><p>';
+    echo 'Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>. ';
+    if (is_owner_mode()) {
+        echo '<a class="owner" href="?action=config">Mainīt iestatījumus</a> ';
+        echo '<a class="owner" href="?action=owner-logout">Beigt darbu</a>';
+    } else {
+        echo '<a class="owner" href="?action=owner-login">Saimnieka skats</a>';
+    }
+    echo '</p></div>';
     echo '</body></html>';
 }
 
@@ -351,29 +497,86 @@ function draw_stylesheets()
 
 
 
+function login_owner($password)
+{
+    if ($password) {
+        $setup = get_setup();
+
+        if ( ! isset($setup['login-counters'])) {
+            $setup['login-counters'] = array();
+        }
+        $counter = 0;
+        $blocked_until = null;
+        if (isset($setup['login-counters'][$_SERVER['REMOTE_ADDR']])) {
+
+            list($counter, $blocked_until) = $setup['login-counters'][$_SERVER['REMOTE_ADDR']];
+            if ($blocked_until > time()) {
+                set_site_error('Pārāk daudz nepareizu minējumu. Autorizācija īslaicīgi bloķēta.');
+                return;
+            }
+
+        }
+
+        if ($setup['password'] == get('password')) {
+            $setup['owner-session'] = get_session_id();
+            $setup['owner-ip'] = $_SERVER['REMOTE_ADDR'];
+            unset($setup['login-counters'][$_SERVER['REMOTE_ADDR']]);
+
+            save_setup($setup);
+            return true;
+
+        } else {
+            $counter++;
+            if ($counter >= 10) {
+                $blocked_until = time() + 60; // 1 minute cooldown
+                set_site_error('Nē. Pārāk daudz nepareizu minējumu, esmu spiests īslaicīgi bloķēt autorizāciju.');
+            } else {
+                set_site_error('Nē.');
+            }
+            $setup['login-counters'][$_SERVER['REMOTE_ADDR']] = array($counter, $blocked_until);
+            save_setup($setup);
+        }
+    }
+}
+
+function is_owner_mode()
+{
+    $setup = get_setup();
+    $owner_session = isset($setup['owner-session']) ? $setup['owner-session'] : null;
+    $owner_ip      = isset($setup['owner-ip']) ? $setup['owner-ip'] : null;
+    return $owner_session == get_session_id() && $owner_ip == $setup['owner-ip'];
+}
+
+function draw_owner_login()
+{
+    echo '<div class="form file">';
+    echo '<form class="owner-login" method="post" action="?">';
+    draw_site_error();
+    echo '<label style="float:left" for="password">Parole:</label>';
+    echo '<input type="hidden" name="action" value="owner-login" />';
+    echo '<input type="password" name="password" id="password" /><br />';
+    echo '<div style="clear:both"></div>';
+    echo '<button type="submit">Autorizēties</button>';
+    echo '</form>';
+    echo '</div>';
+    js_focus_to('password');
+}
+
+function draw_success_box()
+{
+    draw_site_error();
+    echo '<p class="success">';
+    if (sizeof(get_visible_uploads()) == 1) {
+        echo '<strong>Paldies, fails ir saņemts.</strong>';
+} else {
+    echo '<strong>Paldies, faili ir saņemti.</strong>';
+}
+echo ' <a href="?action=show-form">Vai vēlies nosūtīt vēl kādu failu?</a>';
+echo '</p>';
+}
+
 function draw_upload_form()
 {
-    $error_text = get_site_error();
-
-    $show_form = false;
-
-    if (get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0) {
-        $show_form = true;
-    }
-
-
-    if ( ! $show_form) {
-        if ($error_text) {
-            printf('<p class="error">%s</p>', $error_text);
-        }
-        echo '<p class="success">';
-        echo '<strong>Faili aizsūtīti.</strong> <a href="?action=show-form">Vai vēlies nosūtīt vēl kādu failu?</a>';
-        echo '</p>';
-        return;
-    }
-
-
-
     echo '<div class="file form">';
 
     $limit_text = null;
@@ -383,9 +586,7 @@ function draw_upload_form()
     }
     printf('<h2><strong>Pievieno</strong> savu failu: %s</h2>', $limit_text);
 
-    if ($error_text) {
-        printf('<p class="error">%s</p>', $error_text);
-    }
+    draw_site_error();
 
     echo '<form enctype="multipart/form-data" method="post" action="?">';
 
@@ -400,50 +601,84 @@ function draw_upload_form()
     echo '</div>';
 }
 
+function draw_site_error()
+{
+    $error_text = get_site_error();
+    if ($error_text) {
+        printf('<p class="error">%s</p>', $error_text);
+    }
+}
 
 
 function draw_visible_uploads()
 {
     $all = get_visible_uploads();
-    foreach($all as $id=>$entry) {
+    if (is_owner_mode()) {
+        foreach($all as $id=>$entry) {
 
-        echo '<div class="file">';
+            echo '<div class="file">';
 
-        echo '<ul>';
-        printf('<li><a href="%s">pielabot aprakstu</a></li>', '?id=' . $id);
-        printf('<li><a class="delete" href="%s">izdzēst</a></li>', '?action=delete&amp;id=' . $id);
-        echo '</ul>';
+            echo '<ul>';
+            printf('<li>%s, %s</li>', 
+                $entry['request']['REMOTE_ADDR'],
+                date('d.m.Y H:i', $entry['uploaded'])
+            );
+            printf('<li><a class="delete" href="%s">izdzēst</a></li>', '?action=delete&amp;id=' . $id);
+            echo '</ul>';
 
-        printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
-            '?action=download&amp;id=' . $id,
-            htmlspecialchars($entry['original_name']),
-            format_size($entry['size'])
-        );
-
-        if (get_int('id') == $id) {
-            // draw editable form
-            echo '<form method="post" action="?">';
-            printf('<input type="hidden" name="action" value="save-edit" />');
-            printf('<input type="hidden" name="id" value="%s" />', $id);
-            printf('<label>Vari pielabot aprakstu:</label>');
-            printf('<textarea name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
-            echo '<button type="submit">Saglabāt aprakstu</button>';
-            echo '</form>';
-            echo '<script type="text/javascript">document.getElementById(\'upload-description\').focus()</script>';
-        } else {
+            printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
+                '?action=download&amp;id=' . $id,
+                htmlspecialchars($entry['original_name']),
+                format_size($entry['size'])
+            );
             if ($entry['description']) {
-                printf('<div class="description">%s</div>',
-                    nl2br(htmlspecialchars($entry['description'])));
+                echo '<div class="description">';
+                echo nl2br(htmlspecialchars($entry['description']));
+                echo '</div>';
             }
+
+            echo '</div>';
         }
-        /*
-        echo '<div class="description">';
-        var_dump($entry);
-        echo '</div>';
-         */
 
-        echo '</div>';
+    } else {
+        foreach($all as $id=>$entry) {
 
+            echo '<div class="file">';
+
+            echo '<ul>';
+            if ($entry['description']) {
+                printf('<li><a href="%s">pielabot aprakstu</a></li>', '?id=' . $id);
+            } else {
+                printf('<li><a href="%s">pievienot aprakstu</a></li>', '?id=' . $id);
+            }
+            printf('<li><a class="delete" href="%s">izdzēst</a></li>', '?action=delete&amp;id=' . $id);
+            echo '</ul>';
+
+            printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
+                '?action=download&amp;id=' . $id,
+                htmlspecialchars($entry['original_name']),
+                format_size($entry['size'])
+            );
+
+            if (get_int('id') == $id) {
+                // draw editable form
+                echo '<form method="post" action="?">';
+                printf('<input type="hidden" name="action" value="save-edit" />');
+                printf('<input type="hidden" name="id" value="%s" />', $id);
+                printf('<textarea name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
+                echo '<button type="submit">Saglabāt aprakstu</button>';
+                echo '</form>';
+                js_focus_to('upload-description');
+            } else {
+                if ($entry['description']) {
+                    printf('<div class="description">%s</div>',
+                        nl2br(htmlspecialchars($entry['description'])));
+                }
+            }
+
+            echo '</div>';
+
+        }
     }
 }
 function draw_index_with_error($error /*, ...*/)
@@ -547,7 +782,7 @@ function append_to_uploads($entry, $tmp_file)
     }
 
     rename($tmp_file, get_storage_folder() . '/' . $entry['name']);
-    
+
     $setup = get_setup();
     $setup['uploads'][ $entry['uploaded'] ] = $entry;
     save_setup($setup);
@@ -556,13 +791,17 @@ function append_to_uploads($entry, $tmp_file)
 
 function get_setup_file_name()
 {
-    return get_storage_folder() . '/setup.serialized';
+    return get_storage_folder() . '/.setup.serialized';
 }
 
 function get_setup()
 {
     $ser = @file_get_contents(get_setup_file_name());
-    return $ser ? unserialize($ser) : get_default_setup();
+    $setup = @unserialize($ser);
+    if ($setup === false) {
+        $setup = get_default_setup();
+    }
+    return $setup;
 }
 
 function get_default_setup()
@@ -595,13 +834,17 @@ function get_visible_uploads()
 {
     $setup = get_setup();
     $all = $setup['uploads'];
-    $out = array();
-    foreach($all as $id=>$upload) {
-        if ($upload['session'] == get_session_id()) {
-            $out[$id] = $upload;
+    if (is_owner_mode()) {
+        return $all;
+    } else {
+        $out = array();
+        foreach($all as $id=>$upload) {
+            if ($upload['session'] == get_session_id()) {
+                $out[$id] = $upload;
+            }
         }
+        return $out;
     }
-    return $out;
 }
 
 
@@ -692,6 +935,12 @@ function get_site_error()
 }
 
 
+function js_focus_to($object)
+{
+    echo <<<JS
+<script type="text/javascript">document.getElementById('$object').focus();</script>
+JS;
+}
 # build a printable name from (latvian) text
 # undecoded symbols are replaced with underscore
 # utf-8 safe
@@ -782,20 +1031,20 @@ function safe_file_name($file_name, $force_extension = null)
 {
     if (strpos($file_name, '.') === false) {
         $file_name .= '.';
-}
-if (($slash_pos = strrpos($file_name, '/')) !== false) {
-    $file_name = substr($file_name, $slash_pos + 1);
-}
-if ($force_extension === null) {
-    $force_extension = '.' . safe_name(substr($file_name, strrpos($file_name, '.') + 1));
-} else {
-    if ($force_extension != '') {
-        $force_extension = '.' . $force_extension;
     }
-}
-$f = substr($file_name, 0, strrpos($file_name, '.'));
-$out = rtrim(safe_name($f) . $force_extension, '.');
-return $out ? $out : Null;
+    if (($slash_pos = strrpos($file_name, '/')) !== false) {
+        $file_name = substr($file_name, $slash_pos + 1);
+    }
+    if ($force_extension === null) {
+        $force_extension = '.' . safe_name(substr($file_name, strrpos($file_name, '.') + 1));
+    } else {
+        if ($force_extension != '') {
+            $force_extension = '.' . $force_extension;
+        }
+    }
+    $f = substr($file_name, 0, strrpos($file_name, '.'));
+    $out = rtrim(safe_name($f) . $force_extension, '.');
+    return $out ? $out : Null;
 }
 
 function redirect($url = Null)
@@ -826,30 +1075,30 @@ function redirect($url = Null)
 if (function_exists('mb_convert_case')) {
     function strtoupper_utf($str) {
         return mb_convert_case($str, MB_CASE_UPPER, 'UTF-8');
-}
-function strtolower_utf($str) {
-    return mb_convert_case($str, MB_CASE_LOWER, 'UTF-8');
-}
-function strlen_utf($str) {
-    return mb_strlen($str, 'UTF-8');
-}
-function substr_utf($str, $from, $to) {
-    return mb_substr($str, $from, $to, 'UTF-8');
-}
+    }
+    function strtolower_utf($str) {
+        return mb_convert_case($str, MB_CASE_LOWER, 'UTF-8');
+    }
+    function strlen_utf($str) {
+        return mb_strlen($str, 'UTF-8');
+    }
+    function substr_utf($str, $from, $to) {
+        return mb_substr($str, $from, $to, 'UTF-8');
+    }
 
 } else {
     function strtoupper_utf($str) {
         return strtoupper($str);
-}
-function strtolower_utf($str) {
-    return strtolower($str);
-}
-function strlen_utf($str) {
-    return strlen($str);
-}
-function substr_utf($str, $from, $to) {
-    return substr($str, $from, $to);
-}
+    }
+    function strtolower_utf($str) {
+        return strtolower($str);
+    }
+    function strlen_utf($str) {
+        return strlen($str);
+    }
+    function substr_utf($str, $from, $to) {
+        return substr($str, $from, $to);
+    }
 }
 
 ///
