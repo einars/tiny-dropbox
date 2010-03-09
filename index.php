@@ -9,9 +9,7 @@
  * 
  **/
 
-error_reporting(E_ALL);
-ini_set('display_errors', 'on');
-
+# all uploaded files, as well as configuration, will be stored here.
 $g_storage_folder = 'files';
 
 #
@@ -19,13 +17,16 @@ $g_storage_folder = 'files';
 # 
 function process_action($action)
 {
-    $site = array(
+    $handlers = array(
         ''                   => 'on_page_index',
         'default_stylesheet' => 'on_default_stylesheet',
         'upload'             => 'on_upload',
+        'delete'             => 'on_delete',
+        'download'           => 'on_download',
+        'save-edit'          => 'on_save_edit',
     );
 
-    if ( ! isset($site[$action])) {
+    if ( ! isset($handlers[$action])) {
         // 404 would be better, but defaulting to index doesn't hurt
         $action = null;
     }
@@ -36,7 +37,7 @@ function process_action($action)
         // hijack all actions except stylesheet, until the setup is not deemed to be good
         on_setup_required();
     } else {
-        call_user_func($site[$action]);
+        call_user_func($handlers[$action]);
     }
 
 }
@@ -171,12 +172,24 @@ p.error {
 }
 .file li {
     display: inline;
+    padding-left: 4px;
 }
 a {
     color: #545142;
 }
 a.delete {
     color: #f03;
+}
+p.success {
+    font-size: 20px;
+    font-weight: normal;
+    margin-bottom: 10px;
+    color: #65803A;
+}
+p.success a {
+    font-size: 20px;
+    font-weight: normal;
+    color: #65803A;
 }
 CSS;
     exit;
@@ -188,6 +201,7 @@ function on_page_index()
     remove_stale_upload();
 
     draw_upload_form();
+    draw_visible_uploads();
 
     draw_html_footer();
 }
@@ -203,45 +217,76 @@ function on_upload()
 {
 
     if ( ! isset($_FILES['file']) || ! $_FILES['file']['name']) {
-        set_site_error('Lūdzu, <strong>pievieno</strong> savu failu.');
-        return on_page_index();
+        draw_index_with_error('Lūdzu, pievieno pašu failu.');
     }
 
     $file = $_FILES['file'];
 
     if ($file['error']) {
         if ($file['size'] == 0) {
-            set_site_error('Fails saņemts <strong>kļūdaini.</strong> Iespējams, ka tas ir <strong>par lielu?</strong>');
+            draw_index_with_error('Fails saņemts <strong>kļūdaini.</strong> Iespējams, ka tas ir <strong>par lielu?</strong>');
         } else {
-            set_site_error('Fails saņemts <strong>kļūdaini.</strong>');
+            draw_index_with_error('Fails saņemts <strong>kļūdaini.</strong>');
         }
-        return on_page_index();
     }
 
     $tmp_file = get_tmp_upload_name();
 
     $move_res = @move_uploaded_file($file['tmp_name'], $tmp_file);
     if ( ! $move_res) {
-        set_site_error('Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.', $move_res);
-        return on_page_index();
+        draw_index_with_error('Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.', $move_res);
     }
 
     $entry = array(
-        'md5' => md5($tmp_file),
+        'md5' => md5_file($tmp_file),
         'type' => $file['type'],
         'size' => $file['size'],
         'name' => $file['name'],
+        'description' => get('description'),
         );
 
     if (is_already_uploaded($entry)) {
-        set_site_error('Šāds fails te <strong>jau ir ielādēts,</strong> paldies.');
-        return on_page_index();
+        draw_index_with_error('Šāds fails te <strong>jau ir ielādēts,</strong> paldies.');
     }
 
     append_to_uploads($entry, $tmp_file);
 
-    set_site_error('bleh');
-    on_page_index();
+    redirect('?');
+}
+
+
+function on_delete()
+{
+    $id = get_int('id');
+    $entry = safely_get_file_entry($id);
+
+    $all = get_setup();
+    unset($all['uploads'][$id]);
+    save_setup($all);
+    @unlink(get_storage_folder() . '/' . $entry['name']);
+    redirect('?');
+}
+
+
+function on_download()
+{
+
+    $entry = safely_get_file_entry(get_int('id'));
+    header('Content-Type: ' . $entry['type']);
+    header('Content-Length: ' . $entry['size']);
+    header('Content-Disposition: attachment; filename=' . $entry['original_name']);
+    readfile(get_storage_folder() . '/' . $entry['name']);
+    exit;
+}
+function on_save_edit()
+{
+    $id = get_int('id');
+    safely_get_file_entry($id);
+
+    $all = get_setup();
+    $all['uploads'][$id]['description'] = get('description');
+    save_setup($all);
+    redirect('?');
 }
 #
 # /// site specific functions
@@ -309,6 +354,26 @@ function draw_stylesheets()
 function draw_upload_form()
 {
     $error_text = get_site_error();
+
+    $show_form = false;
+
+    if (get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0) {
+        $show_form = true;
+    }
+
+
+    if ( ! $show_form) {
+        if ($error_text) {
+            printf('<p class="error">%s</p>', $error_text);
+        }
+        echo '<p class="success">';
+        echo '<strong>Faili aizsūtīti.</strong> <a href="?action=show-form">Vai vēlies nosūtīt vēl kādu failu?</a>';
+        echo '</p>';
+        return;
+    }
+
+
+
     echo '<div class="file form">';
 
     $limit_text = null;
@@ -337,6 +402,57 @@ function draw_upload_form()
 
 
 
+function draw_visible_uploads()
+{
+    $all = get_visible_uploads();
+    foreach($all as $id=>$entry) {
+
+        echo '<div class="file">';
+
+        echo '<ul>';
+        printf('<li><a href="%s">pielabot aprakstu</a></li>', '?id=' . $id);
+        printf('<li><a class="delete" href="%s">izdzēst</a></li>', '?action=delete&amp;id=' . $id);
+        echo '</ul>';
+
+        printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
+            '?action=download&amp;id=' . $id,
+            htmlspecialchars($entry['original_name']),
+            format_size($entry['size'])
+        );
+
+        if (get_int('id') == $id) {
+            // draw editable form
+            echo '<form method="post" action="?">';
+            printf('<input type="hidden" name="action" value="save-edit" />');
+            printf('<input type="hidden" name="id" value="%s" />', $id);
+            printf('<label>Vari pielabot aprakstu:</label>');
+            printf('<textarea name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
+            echo '<button type="submit">Saglabāt aprakstu</button>';
+            echo '</form>';
+            echo '<script type="text/javascript">document.getElementById(\'upload-description\').focus()</script>';
+        } else {
+            if ($entry['description']) {
+                printf('<div class="description">%s</div>',
+                    nl2br(htmlspecialchars($entry['description'])));
+            }
+        }
+        /*
+        echo '<div class="description">';
+        var_dump($entry);
+        echo '</div>';
+         */
+
+        echo '</div>';
+
+    }
+}
+function draw_index_with_error($error /*, ...*/)
+{
+    $args = func_get_args();
+    call_user_func_array('set_site_error', $args);
+    on_page_index();
+    exit;
+}
 function verify_installation()
 {
     $storage = get_storage_folder();
@@ -452,7 +568,7 @@ function get_setup()
 function get_default_setup()
 {
     return array(
-        'title' => 'tiny file <strong>dropbox</strong>',
+        'title' => 'failu <strong>pastkastīte</strong>',
         'password' => 'master',
         'custom_stylesheet' => null,
         'uploads' => array(),
@@ -475,9 +591,43 @@ function remove_stale_upload()
     $file_name = get_tmp_upload_name();
     @unlink($file_name);
 }
+function get_visible_uploads()
+{
+    $setup = get_setup();
+    $all = $setup['uploads'];
+    $out = array();
+    foreach($all as $id=>$upload) {
+        if ($upload['session'] == get_session_id()) {
+            $out[$id] = $upload;
+        }
+    }
+    return $out;
+}
+
+
+function init_session()
+{
+    // get_session_id will generated sid and set a cookie, if needed
+    get_session_id();
+}
+function safely_get_file_entry($id)
+{
+    $visible = get_visible_uploads();
+    if ( ! isset($visible[$id])) {
+        draw_index_with_error('<strong>Nav</strong> šāda faila.');
+    }
+    return $visible[$id];
+}
 #
 # /// global, generic functions
 #
+function format_size($bytes)
+{
+    if ($bytes < 10000000) {
+        return sprintf('%.1f KB', $bytes / 1000);
+    }
+    return sprintf('%.1f MB', $bytes / 1000000);
+}
 function get_upload_limit()
 {
     // more like guessing
@@ -518,6 +668,11 @@ function get($name)
 }
 
 
+function get_int($name)
+{
+    $var = get($name);
+    return $var === null ? null : (int)$var;
+}
 function set_site_error($message /*, ... */)
 {
     global $g_error;
@@ -643,6 +798,28 @@ $out = rtrim(safe_name($f) . $force_extension, '.');
 return $out ? $out : Null;
 }
 
+function redirect($url = Null)
+{
+    if ($url and $url[0] == '?') {
+        // attempt to correct the '?...' urls
+        if (isset($_SERVER['SCRIPT_URI'])) {
+            $url = $_SERVER['SCRIPT_URI'] . $url;
+        } elseif (isset($_SERVER['HTTP_HOST']) and isset($_SERVER['REQUEST_URI'])) {
+            // some servers don't set SCRIPT_URI
+            if (strpos($_SERVER['REQUEST_URI'], '?') === FALSE) {
+                $url = 'http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'] . $url;
+            } else {
+                $url = 'http://' . $_SERVER['HTTP_HOST'] . substr($_SERVER['REQUEST_URI'], 0, strpos($_SERVER['REQUEST_URI'], '?')) . $url;
+            }
+
+        }
+    }
+
+    @ob_get_contents();
+
+    header("Location: $url");
+    exit;
+}
 //
 // !!! utf-8 support
 //
@@ -681,7 +858,9 @@ function substr_utf($str, $from, $to) {
 ///
 ///
 
-get_session_id();
+error_reporting(E_ALL);
+ini_set('display_errors', 'on');
+init_session();
 process_action(get('action'));
 
 
