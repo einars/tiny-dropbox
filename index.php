@@ -4,13 +4,31 @@
  * 
  * Tiny dropbox script
  * -------------------
- * Written by Einar Lielmanis, http://spicausis.lv
+ * Written by Einar Lielmanis, http://dropbox.bugpipe.org/
  * Bugs, thanks, suggestions: einar@spicausis.lv
- * 
+ *
+ * to allow your customizations together with simple upgrades of this script,
+ * you can create a file called config.php and put overrides there.
+ * Here is an example of the file:
+
+     <?php
+     $g_storage_folder = '/var/storage';
+     $g_language = 'en';
+     set_translation('DELETE', 'Erase completely');
+     ?>
+
+ * You can specify your own CSS file (or just some minor overrides) in owner's interface.
+ * The default password for the interface is "master".
+ *
  **/
 
-# all uploaded files, as well as configuration, will be stored here.
+ # all uploaded files, as well as configuration, will be stored here.
 $g_storage_folder = 'files';
+$g_language = 'lv';
+
+if (file_exists('config.php')) {
+    require_once('config.php');
+}
 
 #
 # /// page actions
@@ -31,13 +49,13 @@ function process_action($action)
     );
 
     if ( ! isset($handlers[$action])) {
-        // 404 would be better, but defaulting to index doesn't hurt
+        // 404 would probably be better, but defaulting to index doesn't hurt
         $action = null;
     }
 
-    $is_setup_good = verify_installation();
+    $is_storage_folder_available = verify_storage_folder();
 
-    if ( ! $is_setup_good && $action != 'default_stylesheet') {
+    if ( ! $is_storage_folder_available && $action != 'default_stylesheet') {
         // hijack all actions except stylesheet, until the setup is not deemed to be good
         on_setup_required();
     } else {
@@ -50,17 +68,8 @@ function process_action($action)
 
 function on_default_stylesheet()
 {
-    $mtime = filemtime(__FILE__);
-    $etag = $mtime;
-
     header('Content-Type: text/css; charset=utf-8');
-    header('Etag: ' . $etag);
-    header('Last-Modified: ' . date('r', $mtime));
-
-    if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] == $etag) {
-        header('HTTP/1.1 304 Not Modified');
-        exit;
-    }
+    etag_last_modified(filemtime(__FILE__));
 
     echo <<<CSS
 * { 
@@ -338,19 +347,23 @@ function on_config()
 
     echo '<input type="hidden" name="action" value="config" />';
     echo '<input type="hidden" name="save" value="yes" />';
-    printf('<label for="i_password">Jaunā parole:</label><input id="i_password" name="password" /><br />');
+    printf('<label for="i_password">%s</label><input id="i_password" name="password" /><br />', 
+        t('LABEL_CONFIG_PASSWORD'));
 
-    printf('<label for="i_title">Lapas virsraksts</label><input id="i_title" name="title" value="%s" /><br />',
+    printf('<label for="i_title">%s</label><input id="i_title" name="title" value="%s" /><br />',
+        t('LABEL_CONFIG_TITLE'),
         htmlspecialchars($setup['title']));
 
-    printf('<label for="i_intro">Lapas ievadteksts</label><textarea id="i_introduction" name="introduction">%s</textarea><br />',
+    printf('<label for="i_intro">%s</label><textarea id="i_introduction" name="introduction">%s</textarea><br />',
+        t('LABEL_CONFIG_INTRODUCTION'),
         htmlspecialchars($setup['introduction']));
 
 
-    printf('<label for="i_css">Ārējā CSS saite</label><input id="i_css" name="custom_stylesheet" value="%s" /><br />',
+    printf('<label for="i_css">%s</label><input id="i_css" name="custom_stylesheet" value="%s" /><br />',
+        t('LABEL_CONFIG_CSS'),
         htmlspecialchars($setup['custom_stylesheet']));
 
-    echo '<button type="submit">Saglabāt izmaiņas</button>';
+    printf('<button type="submit">%s</button>', t('BUTTON_CONFIG_SAVE'));
     echo '</form>';
 
     echo '</div>';
@@ -363,7 +376,7 @@ function on_config()
 
 function on_setup_required()
 {
-    $error = get_site_error();
+    $error = get_error();
     draw_html_header();
     printf('<p class="error">%s</p>', $error);
     draw_html_footer();
@@ -372,16 +385,16 @@ function on_upload()
 {
 
     if ( ! isset($_FILES['file']) || ! $_FILES['file']['name']) {
-        draw_index_with_error('Lūdzu, pievieno pašu failu.');
+        draw_index_with_error(t('ERR_NO_UPLOAD'));
     }
 
     $file = $_FILES['file'];
 
     if ($file['error']) {
         if ($file['size'] == 0) {
-            draw_index_with_error('Fails saņemts <strong>kļūdaini.</strong> Iespējams, ka tas ir <strong>par lielu?</strong>');
+            draw_index_with_error(t('ERR_TOO_BIG'));
         } else {
-            draw_index_with_error('Fails saņemts <strong>kļūdaini.</strong>');
+            draw_index_with_error(t('ERR_BAD_UPLOAD'));
         }
     }
 
@@ -389,7 +402,7 @@ function on_upload()
 
     $move_res = @move_uploaded_file($file['tmp_name'], $tmp_file);
     if ( ! $move_res) {
-        draw_index_with_error('Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.', $move_res);
+        draw_index_with_error(t('ERR_CANNOT_MOVE', $move_res));
     }
 
     $entry = array(
@@ -401,7 +414,7 @@ function on_upload()
     );
 
     if (is_already_uploaded($entry)) {
-        draw_index_with_error('Šāds fails te <strong>jau ir ielādēts,</strong> paldies.');
+        draw_index_with_error(t('ERR_DUPLICATE'));
     }
 
     append_to_uploads($entry, $tmp_file);
@@ -488,12 +501,12 @@ function draw_html_footer()
     echo '<div class="push"></div>';
     echo '</div>';
     echo '<div id="footer"><p>';
-    echo 'Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>. ';
+    echo t('FOOTER');
     if (is_owner_mode()) {
-        echo '<a class="owner" href="?action=config">Mainīt iestatījumus</a> ';
-        echo '<a class="owner" href="?action=owner-logout">Beigt darbu</a>';
+        printf(' <a class="owner" href="?action=config">%s</a>', t('CHANGE_SETTINGS'));
+        printf(' <a class="owner" href="?action=owner-logout">%s</a>', t('OWNER_LOGOUT'));
     } else {
-        echo '<a class="owner" href="?action=owner-login">Saimnieka skats</a>';
+        printf(' <a class="owner" href="?action=owner-logout">%s</a>', t('OWNER_LOGIN'));
     }
     echo '</p></div>';
     echo '</body></html>';
@@ -538,7 +551,7 @@ function login_owner($password)
 
             list($counter, $blocked_until) = $setup['login-counters'][$_SERVER['REMOTE_ADDR']];
             if ($blocked_until > time()) {
-                set_site_error('Pārāk daudz nepareizu minējumu. Autorizācija īslaicīgi bloķēta.');
+                set_error(t('LOGIN_BLOCKED'));
                 return;
             }
 
@@ -556,9 +569,10 @@ function login_owner($password)
             $counter++;
             if ($counter >= 10) {
                 $blocked_until = time() + 60; // 1 minute cooldown
-                set_site_error('Nē. Pārāk daudz nepareizu minējumu, esmu spiests īslaicīgi bloķēt autorizāciju.');
+                set_error(t('WRONG_PASSWORD'));
+                set_error(t('LOGIN_BLOCKED'));
             } else {
-                set_site_error('Nē.');
+                set_error(t('WRONG_PASSWORD'));
             }
             $setup['login-counters'][$_SERVER['REMOTE_ADDR']] = array($counter, $blocked_until);
             save_setup($setup);
@@ -579,11 +593,11 @@ function draw_owner_login()
     echo '<div class="form file">';
     echo '<form class="owner-login" method="post" action="?">';
     draw_site_error();
-    echo '<label style="float:left" for="password">Parole:</label>';
+    printf('<label style="float:left" for="password">%s:</label>', t('LABEL_PASSWORD'));
     echo '<input type="hidden" name="action" value="owner-login" />';
     echo '<input type="password" name="password" id="password" /><br />';
     echo '<div style="clear:both"></div>';
-    echo '<button type="submit">Autorizēties</button>';
+    printf('<button type="submit">Autorizēties</button>', t('BUTTON_LOGIN'));
     echo '</form>';
     echo '</div>';
     js_focus_to('password');
@@ -594,12 +608,12 @@ function draw_success_box()
     draw_site_error();
     echo '<p class="success">';
     if (sizeof(get_visible_uploads()) == 1) {
-        echo '<strong>Paldies, fails ir saņemts.</strong>';
-} else {
-    echo '<strong>Paldies, faili ir saņemti.</strong>';
-}
-echo ' <a href="?action=show-form">Vai vēlies nosūtīt vēl kādu failu?</a>';
-echo '</p>';
+        printf('<strong>%s</strong>', t('SUCCESS_SINGLE'));
+    } else {
+        printf('<strong>%s</strong>', t('SUCCESS_MULTIPLE'));
+    }
+    printf(' <a href="?action=show-form">%s</a>', t('LINK_ADD_MORE'));
+    echo '</p>';
 }
 
 function draw_upload_form()
@@ -609,9 +623,10 @@ function draw_upload_form()
     $limit_text = null;
     $limit = get_upload_limit();
     if ($limit > 1000000) {
-        $limit_text = sprintf(' <em>%d MB ierobežojums</em>', $limit / 1000000.0);
+        $limit_text = t('UPLOAD_LIMIT', $limit / 1000000.0);
+        $limit_text = " <em>$limit_text</em>";
     }
-    printf('<h2><strong>Pievieno</strong> savu failu: %s</h2>', $limit_text);
+    printf('<h2>%s %s</h2>', t('UPLOAD_YOUR_FILE'), $limit_text);
 
     draw_site_error();
 
@@ -619,9 +634,9 @@ function draw_upload_form()
 
     echo '<input type="hidden" name="action" value="upload" />';
     echo '<input name="file" type="file" /><br />';
-    echo '<label for="description" id="description">Vieta nelielam aprakstam:</label>';
+    printf('<label for="description" id="description">%s</label>', t('LABEL_DESCRIPTION'));
     printf('<textarea name="description">%s</textarea><br />', htmlspecialchars(get('description')));
-    echo '<button type="submit"><strong>Ielādē</strong> un nosūti failu</button>';
+    printf('<button type="submit">%s</button>', t('BUTTON_UPLOAD'));
 
     echo '</form>';
 
@@ -630,7 +645,7 @@ function draw_upload_form()
 
 function draw_site_error()
 {
-    $error_text = get_site_error();
+    $error_text = get_error();
     if ($error_text) {
         printf('<p class="error">%s</p>', $error_text);
     }
@@ -650,7 +665,7 @@ function draw_visible_uploads()
                 $entry['request']['REMOTE_ADDR'],
                 date('d.m.Y H:i', $entry['uploaded'])
             );
-            printf('<li><a class="delete" href="%s">izdzēst</a></li>', '?action=delete&amp;id=' . $id);
+            printf('<li><a class="delete" href="%s">%s</a></li>', '?action=delete&amp;id=' . $id, t('LINK_ERASE'));
             echo '</ul>';
 
             printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
@@ -669,7 +684,7 @@ function draw_visible_uploads()
 
         if ( ! sizeof($all)) {
 
-            echo '<div class="file"><h2>Nekas nav atsūtīts.</h2></div>';
+            printf('<div class="file"><h2>%s</h2></div>', t('NO_FILES'));
 
         }
 
@@ -680,11 +695,11 @@ function draw_visible_uploads()
 
             echo '<ul>';
             if ($entry['description']) {
-                printf('<li><a href="%s">pielabot aprakstu</a></li>', '?id=' . $id);
+                printf('<li><a href="%s">%s</a></li>', '?id=' . $id, t('LINK_EDIT_DESCRIPTION'));
             } else {
-                printf('<li><a href="%s">pievienot aprakstu</a></li>', '?id=' . $id);
+                printf('<li><a href="%s">%s</a></li>', '?id=' . $id, t('LINK_ADD_DESCRIPTION'));
             }
-            printf('<li><a class="delete" href="%s">izdzēst</a></li>', '?action=delete&amp;id=' . $id);
+            printf('<li><a class="delete" href="%s">%s</a></li>', '?action=delete&amp;id=' . $id, t('LINK_ERASE'));
             echo '</ul>';
 
             printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
@@ -699,7 +714,7 @@ function draw_visible_uploads()
                 printf('<input type="hidden" name="action" value="save-edit" />');
                 printf('<input type="hidden" name="id" value="%s" />', $id);
                 printf('<textarea name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
-                echo '<button type="submit">Saglabāt aprakstu</button>';
+                printf('<button type="submit">%s</button>', t('BUTTON_SAVE_EDIT'));
                 echo '</form>';
                 js_focus_to('upload-description');
             } else {
@@ -717,11 +732,11 @@ function draw_visible_uploads()
 function draw_index_with_error($error /*, ...*/)
 {
     $args = func_get_args();
-    call_user_func_array('set_site_error', $args);
+    call_user_func_array('set_error', $args);
     on_page_index();
     exit;
 }
-function verify_installation()
+function verify_storage_folder()
 {
     $storage = get_storage_folder();
 
@@ -732,14 +747,12 @@ function verify_installation()
 
     clearstatcache();
     if ( ! is_dir($storage)) {
-        set_site_error('Missing folder where to store files. Please create a folder <strong>%s</strong> and make it writable.', 
-            htmlspecialchars($storage));
+        set_error(t('ERR_MISSING_STORAGE', htmlspecialchars($storage)));
         return false;
     }
 
     if ( ! is_writable($storage)) {
-        set_site_error('Cannot write to folder <strong>%s</strong>. Make it writable, please.', 
-            htmlspecialchars($storage));
+        set_error(t('ERR_READONLY_STORAGE', htmlspecialchars($storage)));
         return false;
     }
 
@@ -755,8 +768,7 @@ HTACCESS;
 
     clearstatcache();
     if ( ! file_exists($htaccess_file)) {
-        set_site_error('Creating file <strong>%s</strong> failed. The folder probably is not writable?', 
-            htmlspecialchars($htaccess_file));
+        set_error(t('ERR_WRITE_FAILED', htmlspecialchars($htaccess_file)));
         return false;
     }
 
@@ -840,10 +852,10 @@ function get_setup()
 function get_default_setup()
 {
     return array(
-        'title' => 'failu <strong>pastkastīte</strong>',
+        'title' => t('DEFAULT_TITLE'),
         'password' => 'master',
         'custom_stylesheet' => null,
-        'introduction' => 'Izmantojot šo lapu, vari nosūtīt man savus failus.',
+        'introduction' => t('DEFAULT_INTRODUCTION'),
         'uploads' => array(),
     );
 }
@@ -887,17 +899,119 @@ function init_session()
     // get_session_id will generated sid and set a cookie, if needed
     get_session_id();
 }
+
 function safely_get_file_entry($id)
 {
     $visible = get_visible_uploads();
     if ( ! isset($visible[$id])) {
-        draw_index_with_error('<strong>Nav</strong> šāda faila.');
+        draw_index_with_error(t('ERR_NO_FILE'));
     }
     return $visible[$id];
 }
 #
+# /// languages and internationalization support
+#
+function init_default_languages()
+{
+    $lv = <<<LANG
+LANGUAGE                  latviešu
+FOOTER                    Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.
+CHANGE_SETTINGS           Mainīt iestatījumus
+OWNER_LOGIN               Saimnieka skats
+OWNER_LOGOUT              Beigt darbu
+LOGIN_BLOCKED             Pārāk daudz nepareizu minējumu. Autorizācija īslaicīgi bloķēta.
+WRONG_PASSWORD            Parole nav pareiza.
+LABEL_PASSWORD            Parole:
+BUTTON_LOGIN              Autorizēties
+SUCCESS_SINGLE            Paldies, fails ir saņemts.
+SUCCESS_MULTIPLE          Paldies, faili ir saņemti.
+LINK_ADD_MORE             Vai vēlies nosūtīt vēl kādu failu?
+UPLOAD_LIMIT              %d MB ierobežojums
+UPLOAD_YOUR_FILE          <strong>Pievieno</strong> savu failu:
+LABEL_DESCRIPTION         Vieta nelielam aprakstam:
+BUTTON_UPLOAD             <strong>Ielādē</strong> un nosūti failu
+NO_FILES                  Nekas nav atsūtīts.
+LINK_EDIT_DESCRIPTION     pielabot aprakstu
+LINK_ADD_DESCRIPTION      pievienot aprakstu
+LINK_ERASE                izdzēst
+BUTTON_SAVE_EDIT          Saglabāt aprakstu
+ERR_MISSING_STORAGE       Nav mapītes, kur glabāt failu, un nevaru to izveidot. Lūdzu, izveido mapīti <strong>%s</strong> un piešķir tai rakstīšanas tiesības.
+ERR_READONLY_STORAGE      Nevaru neko ierakstīt mapītē <strong>%s</strong>. Lūdzu, piešķir tai rakstīšanas tiesības.
+ERR_WRITE_FAILED          Neizdevās izveidot failu <strong>%s</strong>. Lūdzu, pārliecinies, ka mapītei ir rakstīšanas tiesības.
+ERR_NO_FILE               <strong>Nav</strong> šāda faila.
+DEFAULT_TITLE             failu <strong>pastkastīte</strong>
+DEFAULT_INTRODUCTION      Izmantojot šo lapu, vari nosūtīt man savus failus.
+LABEL_CONFIG_PASSWORD     Jaunā parole:
+LABEL_CONFIG_TITLE        Lapas virsraksts:
+LABEL_CONFIG_INTRODUCTION Lapas ievadteksts:
+LABEL_CONFIG_CSS          Ārējā css saite:
+BUTTON_CONFIG_SAVE        Saglabāt izmaiņas
+ERR_NO_UPLOAD             Lūdzu, pievieno pašu failu.
+ERR_TOO_BIG               Fails saņemts <strong>kļūdaini</strong>. Iespējams, ka tas ir <strong>par lielu?</strong>
+ERR_BAD_UPLOAD            Fails saņemts <strong>kļūdaini</strong>.
+ERR_CANNOT_MOVE           Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.
+ERR_DUPLICATE             Šāds fails te <strong>jau ir ielādēts</strong>, paldies.
+LANG;
+    add_language('lv', $lv);
+}
+
+
+function add_language($language, $words)
+{
+    global $g_languages;
+    $g_languages[$language] = $words;
+}
+
+
+function parse_language($words)
+{
+    $words = explode("\n", $words);
+    $out = array();
+    foreach($words as $word) {
+        if ($word) {
+            list($tag, $word) = explode(' ', $word, 2);
+            $word = ltrim($word);
+            $out[$tag] = $word;
+        }
+    }
+    return $out;
+}
+
+
+function t($tag /* ... */)
+{
+    global $g_language, $g_languages, $g_parsed_language;
+    if ( ! isset($g_parsed_language)) {
+
+        $g_parsed_language = parse_language( isset($g_languages[$g_language]) ? $g_languages[$g_language] : '' );
+
+    }
+
+    $word = isset($g_parsed_language[$tag]) ? $g_parsed_language[$tag] : $tag;
+    if (func_num_args() > 1) {
+        $args = func_get_args();
+        return call_user_func_array('sprintf', $args);
+    } else {
+        return $word;
+    }
+
+}
+
+
+#
 # /// global, generic functions
 #
+function etag_last_modified($last_modified)
+{
+    $etag = $last_modified;
+    header('Etag: ' . $etag);
+    header('Last-Modified: ' . date('r', $last_modified));
+
+    if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && $_SERVER['HTTP_IF_NONE_MATCH'] == $etag) {
+        header('HTTP/1.1 304 Not Modified');
+        exit;
+    }
+}
 function format_size($bytes)
 {
     if ($bytes < 1000000) {
@@ -950,7 +1064,7 @@ function get_int($name)
     $var = get($name);
     return $var === null ? null : (int)$var;
 }
-function set_site_error($message /*, ... */)
+function set_error($message /*, ... */)
 {
     global $g_error;
 
@@ -960,7 +1074,7 @@ function set_site_error($message /*, ... */)
     $g_error[] = $message;
 }
 
-function get_site_error()
+function get_error()
 {
     global $g_error;
     if ($g_error) {
@@ -1144,6 +1258,7 @@ if (function_exists('mb_convert_case')) {
 error_reporting(E_ALL);
 ini_set('display_errors', 'on');
 init_session();
+init_default_languages();
 process_action(get('action'));
 
 
