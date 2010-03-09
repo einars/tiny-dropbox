@@ -76,7 +76,7 @@ function on_default_stylesheet()
     padding: 0;
 }
 body {
-    background: #ccb url(/tinydropbox/?action=background_image) repeat;
+    background: #ccb url(?action=background_image) repeat;
 }
 body, html {
     height: 100%;
