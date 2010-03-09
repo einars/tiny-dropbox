@@ -250,11 +250,20 @@ p.success a {
     float: left;
     clear: left;
 }
+.config em {
+    color: #777;
+    font-style: normal;
+    font-size: 12px;
+}
 .config input {
     width: 300px;
 }
 .config button {
     margin-left: 150px;
+}
+.config #i_password {
+    color: #777;
+    font-style: italic;
 }
 CSS;
     exit;
@@ -359,16 +368,27 @@ function on_config()
 
     echo '<input type="hidden" name="action" value="config" />';
     echo '<input type="hidden" name="save" value="yes" />';
-    printf('<label for="i_password">%s</label><input id="i_password" name="password" /><br />', 
-        t('LABEL_CONFIG_PASSWORD'));
+    printf('<label for="i_password">%s</label><input id="i_password" name="password" value="%s" /><br />', 
+        t('LABEL_CONFIG_PASSWORD'), $setup['password'] == 'master' ? 'master' : null);
+
+    $title = $setup['title'];
+    if ( ! $title) {
+        $title = t('DEFAULT_TITLE');
+    }
+
+
+    $introduction = $setup['introduction'];
+    if ($introduction === null) {
+        $introduction = t('DEFAULT_INTRODUCTION');
+    }
 
     printf('<label for="i_title">%s</label><input id="i_title" name="title" value="%s" /><br />',
         t('LABEL_CONFIG_TITLE'),
-        htmlspecialchars($setup['title']));
+        htmlspecialchars($title));
 
     printf('<label for="i_intro">%s</label><textarea id="i_introduction" name="introduction">%s</textarea><br />',
         t('LABEL_CONFIG_INTRODUCTION'),
-        htmlspecialchars($setup['introduction']));
+        htmlspecialchars($introduction));
 
     printf('<label for="i_language">%s</label>', t('LABEL_CONFIG_LANGUAGE'));
     echo '<select name="language" id="i_language">';
@@ -683,8 +703,12 @@ function draw_html_header()
     $setup = get_setup();
     $title = $setup['title'];
 
+    if ( ! $title) {
+        $title = t('DEFAULT_TITLE');
+    }
+
     if (is_owner_mode()) {
-        $title .= ', pārvaldīšana';
+        $title .= ', ' . t('OWNER_TITLE');
     }
 
     header('Content-Type: text/html; charset=utf-8');
@@ -1069,12 +1093,14 @@ function get_setup()
 function get_default_setup()
 {
     return array(
-        'title' => t('DEFAULT_TITLE'),
+        'title' => null,
         'password' => 'master',
         'custom_stylesheet' => null,
-        'introduction' => t('DEFAULT_INTRODUCTION'),
+        'introduction' => null,
         'uploads' => array(),
         'language' => 'en',
+        'owner-session' => get_session_id(),
+        'owner-ip' => $_SERVER['REMOTE_ADDR'],
     );
 }
 
@@ -1141,6 +1167,7 @@ function init_default_languages()
 LANGUAGE                  latviešu
 FOOTER                    Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.
 CHANGE_SETTINGS           Mainīt iestatījumus
+OWNER_TITLE               pārvaldīšana
 OWNER_LOGIN               Saimnieka skats
 OWNER_LOGOUT              Beigt darbu
 LOGIN_BLOCKED             Pārāk daudz nepareizu minējumu. Autorizācija īslaicīgi bloķēta.
@@ -1182,6 +1209,7 @@ LANG;
 LANGUAGE                  english
 FOOTER                    Written by <a href="http://bugpipe.org/">Einar Lielmanis</a>, color scheme and images by <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.
 CHANGE_SETTINGS           Change settings
+OWNER_TITLE               owner mode
 OWNER_LOGIN               Owner mode
 OWNER_LOGOUT              Logout
 LOGIN_BLOCKED             Too many failed attempts: I've temporarily blocked the login form.
@@ -1200,11 +1228,11 @@ LINK_EDIT_DESCRIPTION     edit description
 LINK_ADD_DESCRIPTION      add a description
 LINK_ERASE                erase
 BUTTON_SAVE_EDIT          Save description
-ERR_MISSING_STORAGE       The storage folder is missing, and unable to create it. Create a folder <strong>%s</strong> and make it writable.
-ERR_READONLY_STORAGE      The storage folder <strong>%s</strong> seems to be read-only. Make it writable, please.
-ERR_WRITE_FAILED          Writing to a file <strong>%s</strong> failed. Please, check the folder permissions.
+ERR_MISSING_STORAGE       The storage folder is missing, and unable to create it. Create a folder <strong>«%s»</strong> and make it writable.
+ERR_READONLY_STORAGE      The storage folder <strong>«%s»</strong> seems to be read-only. Make it writable, please.
+ERR_WRITE_FAILED          Writing to a file <strong>«%s»</strong> failed. Please, check the folder permissions.
 ERR_NO_FILE               No such file.
-DEFAULT_TITLE             tiny personal <strong>file dropbox</strong>
+DEFAULT_TITLE             tiny <strong>file dropbox</strong>
 DEFAULT_INTRODUCTION      Using this page, you can easily send me various files.
 LABEL_CONFIG_PASSWORD     New password:
 LABEL_CONFIG_TITLE        Page title:
@@ -1261,6 +1289,7 @@ function t($tag /* ... */)
     $word = isset($g_parsed_language[$tag]) ? $g_parsed_language[$tag] : $tag;
     if (func_num_args() > 1) {
         $args = func_get_args();
+        $args[0] = $word;
         return call_user_func_array('sprintf', $args);
     } else {
         return $word;
