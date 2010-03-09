@@ -7,8 +7,25 @@
  * Written by Einar Lielmanis, http://dropbox.bugpipe.org/
  * Bugs, thanks, suggestions: einar@spicausis.lv
  *
- * to allow your customizations together with simple upgrades of this script,
- * you can create a file called config.php and put overrides there.
+ * Requirements
+ *
+ * If it runs PHP, it will probably run tiny dropbox as well, regardless of the setup: the script is quite flexible.
+ *
+ *
+ * Installation
+ *
+ * Put the file into any folder of your web hosting provider.
+ * By visiting the page the first time, you will automatically be logged in as owner
+ * and will be able to customize language, password, etc.
+ *
+ * If the script is unable to create the storage folder by itself, it will complain; in that case you will need to 
+ * create the folder "files" and assign sufficient permissions manually.
+ *
+ *
+ * Specific customizations
+ *
+ * I doubt that you will need taht, but to allow your customizations together with simple upgrades of this script,
+ * you can create a file called config.php and store any overrides there.
  * Here is an example of the file:
 
      <?php
@@ -19,6 +36,13 @@
  * custom.php: everything else can be done from the owner settings page.
  *
  **/
+
+# todo:
+# - disallow empty files
+# - allow owner upload
+# - max.limit
+# - password for uploading
+# - simplify multiple files
 
  # all uploaded files, as well as configuration, will be stored here.
 $g_storage_folder = 'files';
@@ -386,7 +410,7 @@ function on_config()
         t('LABEL_CONFIG_TITLE'),
         htmlspecialchars($title));
 
-    printf('<label for="i_intro">%s</label><textarea id="i_introduction" name="introduction">%s</textarea><br />',
+    printf('<label for="i_intro">%s</label><textarea id="i_introduction" rows="5" cols="40" name="introduction">%s</textarea><br />',
         t('LABEL_CONFIG_INTRODUCTION'),
         htmlspecialchars($introduction));
 
@@ -695,7 +719,7 @@ function on_background_image()
 function get_storage_folder()
 {
     global $g_storage_folder;
-    return rtrim($g_storage_folder);
+    return rtrim($g_storage_folder, '/ ');
 }
 function draw_html_header()
 {
@@ -876,7 +900,7 @@ function draw_upload_form()
     echo '<input type="hidden" name="action" value="upload" />';
     echo '<input name="file" type="file" /><br />';
     printf('<label for="description" id="description">%s</label>', t('LABEL_DESCRIPTION'));
-    printf('<textarea name="description">%s</textarea><br />', htmlspecialchars(get('description')));
+    printf('<textarea rows="5" cols="40" name="description">%s</textarea><br />', htmlspecialchars(get('description')));
     printf('<button type="submit">%s</button>', t('BUTTON_UPLOAD'));
 
     echo '</form>';
@@ -954,7 +978,7 @@ function draw_visible_uploads()
                 echo '<form method="post" action="?">';
                 printf('<input type="hidden" name="action" value="save-edit" />');
                 printf('<input type="hidden" name="id" value="%s" />', $id);
-                printf('<textarea name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
+                printf('<textarea rows="5" cols="40" name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
                 printf('<button type="submit">%s</button>', t('BUTTON_SAVE_EDIT'));
                 echo '</form>';
                 js_focus_to('upload-description');
