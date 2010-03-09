@@ -13,18 +13,15 @@
 
      <?php
      $g_storage_folder = '/var/storage';
-     $g_language = 'en';
-     set_translation('DELETE', 'Erase completely');
      ?>
 
- * You can specify your own CSS file (or just some minor overrides) in owner's interface.
- * The default password for the interface is "master".
+ * You can add your own interface languages (via add_language() function) or change the upload folder from the 
+ * custom.php: everything else can be done from the owner settings page.
  *
  **/
 
  # all uploaded files, as well as configuration, will be stored here.
 $g_storage_folder = 'files';
-$g_language = 'lv';
 
 if (file_exists('config.php')) {
     require_once('config.php');
@@ -184,7 +181,7 @@ div.file div.description {
 div#introduction {
     padding-left: 4px;
 }
-input {
+input, select {
     margin-bottom: 4px;
     font-family: arial, sans-serif;
     font-size: 12px;
@@ -247,6 +244,7 @@ p.success a {
 }
 .config label {
     width: 150px;
+    padding-top: 4px;
     float: left;
     clear: left;
 }
@@ -287,9 +285,14 @@ function on_owner_logout()
 
 function on_page_index()
 {
+    if ( ! file_exists(get_setup_file_name())) {
+        return on_config();
+    }
+
     draw_html_header();
 
     remove_stale_upload();
+
 
     if ( ! is_owner_mode()) {
         if (get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0) {
@@ -315,6 +318,8 @@ function on_config()
         redirect('?');
     }
 
+    global $g_languages;
+
     $setup = get_setup();
 
     if (get('save')) {
@@ -333,6 +338,11 @@ function on_config()
 
         $css = get('custom_stylesheet');
         $setup['custom_stylesheet'] = $css;
+
+        $language = get('language');
+        if (isset($g_languages[$language])) {
+            $setup['language'] = $language;
+        }
 
         save_setup($setup);
         redirect('?');
@@ -358,6 +368,16 @@ function on_config()
         t('LABEL_CONFIG_INTRODUCTION'),
         htmlspecialchars($setup['introduction']));
 
+    printf('<label for="i_language">%s</label>', t('LABEL_CONFIG_LANGUAGE'));
+    echo '<select name="language" id="i_language">';
+    foreach($g_languages as $id => $language) {
+        $parsed = parse_language($language);
+        printf('<option value="%s"%s>%s</option>',
+            $id,
+            $id == get_site_language() ? ' selected="selected"' : '',
+            isset($parsed['LANGUAGE']) ? htmlspecialchars($parsed['LANGUAGE']) : $id);
+    }
+    echo '</select><br />';
 
     printf('<label for="i_css">%s</label><input id="i_css" name="custom_stylesheet" value="%s" /><br />',
         t('LABEL_CONFIG_CSS'),
@@ -506,7 +526,7 @@ function draw_html_footer()
         printf(' <a class="owner" href="?action=config">%s</a>', t('CHANGE_SETTINGS'));
         printf(' <a class="owner" href="?action=owner-logout">%s</a>', t('OWNER_LOGOUT'));
     } else {
-        printf(' <a class="owner" href="?action=owner-logout">%s</a>', t('OWNER_LOGIN'));
+        printf(' <a class="owner" href="?action=owner-login">%s</a>', t('OWNER_LOGIN'));
     }
     echo '</p></div>';
     echo '</body></html>';
@@ -582,6 +602,10 @@ function login_owner($password)
 
 function is_owner_mode()
 {
+    if ( ! file_exists(get_setup_file_name())) {
+        return true;
+    }
+
     $setup = get_setup();
     $owner_session = isset($setup['owner-session']) ? $setup['owner-session'] : null;
     $owner_ip      = isset($setup['owner-ip']) ? $setup['owner-ip'] : null;
@@ -597,7 +621,7 @@ function draw_owner_login()
     echo '<input type="hidden" name="action" value="owner-login" />';
     echo '<input type="password" name="password" id="password" /><br />';
     echo '<div style="clear:both"></div>';
-    printf('<button type="submit">Autorizēties</button>', t('BUTTON_LOGIN'));
+    printf('<button type="submit">%s</button>', t('BUTTON_LOGIN'));
     echo '</form>';
     echo '</div>';
     js_focus_to('password');
@@ -857,6 +881,7 @@ function get_default_setup()
         'custom_stylesheet' => null,
         'introduction' => t('DEFAULT_INTRODUCTION'),
         'uploads' => array(),
+        'language' => 'en',
     );
 }
 
@@ -911,6 +936,12 @@ function safely_get_file_entry($id)
 #
 # /// languages and internationalization support
 #
+function get_site_language()
+{
+    $setup = get_setup();
+    return $setup['language'];
+}
+
 function init_default_languages()
 {
     $lv = <<<LANG
@@ -945,6 +976,7 @@ LABEL_CONFIG_PASSWORD     Jaunā parole:
 LABEL_CONFIG_TITLE        Lapas virsraksts:
 LABEL_CONFIG_INTRODUCTION Lapas ievadteksts:
 LABEL_CONFIG_CSS          Ārējā css saite:
+LABEL_CONFIG_LANGUAGE     Lapas valoda:
 BUTTON_CONFIG_SAVE        Saglabāt izmaiņas
 ERR_NO_UPLOAD             Lūdzu, pievieno pašu failu.
 ERR_TOO_BIG               Fails saņemts <strong>kļūdaini</strong>. Iespējams, ka tas ir <strong>par lielu?</strong>
@@ -952,14 +984,59 @@ ERR_BAD_UPLOAD            Fails saņemts <strong>kļūdaini</strong>.
 ERR_CANNOT_MOVE           Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.
 ERR_DUPLICATE             Šāds fails te <strong>jau ir ielādēts</strong>, paldies.
 LANG;
+
+    $en = <<<LANG
+LANGUAGE                  english
+FOOTER                    Written by <a href="http://bugpipe.org/">Einar Lielmanis</a>, color scheme and images by <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.
+CHANGE_SETTINGS           Change settings
+OWNER_LOGIN               Owner mode
+OWNER_LOGOUT              Logout
+LOGIN_BLOCKED             Too many failed attempts: I've temporarily blocked the login form.
+WRONG_PASSWORD            The password is incorrect.
+LABEL_PASSWORD            Password:
+BUTTON_LOGIN              Login
+SUCCESS_SINGLE            Thank you, your file is received.
+SUCCESS_MULTIPLE          Thank you, your files are received.
+LINK_ADD_MORE             Would you like to send another file?
+UPLOAD_LIMIT              %d MB limit
+UPLOAD_YOUR_FILE          <strong>Upload</strong> your file:
+LABEL_DESCRIPTION         You can add a short description:
+BUTTON_UPLOAD             <strong>Upload</strong> and send your file
+NO_FILES                  Nothing received.
+LINK_EDIT_DESCRIPTION     edit description
+LINK_ADD_DESCRIPTION      add a description
+LINK_ERASE                erase
+BUTTON_SAVE_EDIT          Save description
+ERR_MISSING_STORAGE       The storage folder is missing, and unable to create it. Create a folder <strong>%s</strong> and make it writable.
+ERR_READONLY_STORAGE      The storage folder <strong>%s</strong> seems to be read-only. Make it writable, please.
+ERR_WRITE_FAILED          Writing to a file <strong>%s</strong> failed. Please, check the folder permissions.
+ERR_NO_FILE               No such file.
+DEFAULT_TITLE             tiny personal <strong>file dropbox</strong>
+DEFAULT_INTRODUCTION      Using this page, you can easily send me various files.
+LABEL_CONFIG_PASSWORD     New password:
+LABEL_CONFIG_TITLE        Page title:
+LABEL_CONFIG_INTRODUCTION Page introduction:
+LABEL_CONFIG_CSS          External stylesheet URL:
+LABEL_CONFIG_LANGUAGE     Site language:
+BUTTON_CONFIG_SAVE        Save changes
+ERR_NO_UPLOAD             You haven't attached any file.
+ERR_TOO_BIG               There was a <strong>problem</strong> receiving your file. It is possible that it was <strong>too big</strong> for the server limits.
+ERR_BAD_UPLOAD            There was a <strong>problem</strong> receiving your file.
+ERR_CANNOT_MOVE           Cannot move the uploaded file to <strong>%s</strong>.
+ERR_DUPLICATE             This file is <strong>already uploaded</strong>, thank you.
+LANG;
+
     add_language('lv', $lv);
+    add_language('en', $en);
 }
 
 
 function add_language($language, $words)
 {
     global $g_languages;
-    $g_languages[$language] = $words;
+    if ( ! isset($g_languages[$language])) {
+        $g_languages[$language] = $words;
+    }
 }
 
 
@@ -980,10 +1057,11 @@ function parse_language($words)
 
 function t($tag /* ... */)
 {
-    global $g_language, $g_languages, $g_parsed_language;
+    global $g_languages, $g_parsed_language;
     if ( ! isset($g_parsed_language)) {
 
-        $g_parsed_language = parse_language( isset($g_languages[$g_language]) ? $g_languages[$g_language] : '' );
+        $language = get_site_language();
+        $g_parsed_language = parse_language( isset($g_languages[$language]) ? $g_languages[$language] : '' );
 
     }
 
