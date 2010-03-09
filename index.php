@@ -12,19 +12,7 @@
 error_reporting(E_ALL);
 ini_set('display_errors', 'on');
 
-$settings = array(
-
-    'custom_stylesheet' => null,
-    'storage_folder'    => 'files',
-    'title'             => 'Ingas failu <strong>pastkastīte</strong>',
-
-    );
-
-
-
-process_action(get('action'));
-
-
+$g_storage_folder = 'files';
 
 #
 # /// page actions
@@ -197,6 +185,8 @@ function on_page_index()
 {
     draw_html_header();
 
+    remove_stale_upload();
+
     draw_upload_form();
 
     draw_html_footer();
@@ -211,7 +201,46 @@ function on_setup_required()
 }
 function on_upload()
 {
-    set_site_error('Not yet <strong>implemented.</strong>');
+
+    if ( ! isset($_FILES['file']) || ! $_FILES['file']['name']) {
+        set_site_error('Lūdzu, <strong>pievieno</strong> savu failu.');
+        return on_page_index();
+    }
+
+    $file = $_FILES['file'];
+
+    if ($file['error']) {
+        if ($file['size'] == 0) {
+            set_site_error('Fails saņemts <strong>kļūdaini.</strong> Iespējams, ka tas ir <strong>par lielu?</strong>');
+        } else {
+            set_site_error('Fails saņemts <strong>kļūdaini.</strong>');
+        }
+        return on_page_index();
+    }
+
+    $tmp_file = get_tmp_upload_name();
+
+    $move_res = @move_uploaded_file($file['tmp_name'], $tmp_file);
+    if ( ! $move_res) {
+        set_site_error('Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.', $move_res);
+        return on_page_index();
+    }
+
+    $entry = array(
+        'md5' => md5($tmp_file),
+        'type' => $file['type'],
+        'size' => $file['size'],
+        'name' => $file['name'],
+        );
+
+    if (is_already_uploaded($entry)) {
+        set_site_error('Šāds fails te <strong>jau ir ielādēts,</strong> paldies.');
+        return on_page_index();
+    }
+
+    append_to_uploads($entry, $tmp_file);
+
+    set_site_error('bleh');
     on_page_index();
 }
 #
@@ -219,14 +248,14 @@ function on_upload()
 #
 function get_storage_folder()
 {
-    $folder = get_setting('storage_folder', 'storage');
-    $folder = rtrim($folder, '/');
-    return $folder;
+    global $g_storage_folder;
+    return rtrim($g_storage_folder);
 }
 function draw_html_header()
 {
 
-    $title = get_setting('title', 'Tiny <strong>dropbox</strong>');
+    $setup = get_setup();
+    $title = $setup['title'];
 
     echo <<<HTML
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -262,8 +291,13 @@ function draw_html_footer()
 
 function draw_stylesheets()
 {
-    $default_stylesheet = '?action=default_stylesheet&amp;time=' . date('Y_m_d-H_i', filemtime(__FILE__));
-    $stylesheet = get_setting('custom_stylesheet', $default_stylesheet);
+    $stylesheet = '?action=default_stylesheet&amp;time=' . date('Y_m_d-H_i', filemtime(__FILE__));
+
+    $setup = get_setup();
+    if ($setup['custom_stylesheet']) {
+        $stylesheet = $setup['custom_stylesheet'];
+    }
+
     if ($stylesheet) {
         printf('<link rel="stylesheet" href="%s" media="all" />', $stylesheet);
     }
@@ -345,13 +379,109 @@ HTACCESS;
     return true;
 }
 
+function get_session_id()
+{
+    global $g_sid;
+
+    if ( ! isset($g_sid)) {
+        $symbols = '0123456789abcdefghijklmnopqrstuvwxyz';
+
+        if (isset($_COOKIE['dropbox_sid']) && preg_match("/^[$symbols]+$/", $_COOKIE['dropbox_sid'])) {
+            // cookie is just a temporary random gibberish, so we don't care
+            // user may try to spoof it, and he is welcome to to that
+            $g_sid = $_COOKIE['dropbox_sid'];
+        } else {
+            $g_sid = null;
+            list($usec, $sec) = explode(' ', microtime());
+            mt_srand( (10000000000 * (float)$usec) ^ (float)$sec );
+            for($i = 0 ; $i < 10; $i++) {
+                $g_sid .= $symbols[mt_rand(0, strlen($symbols) - 1)];
+            }
+            setcookie('dropbox_sid', $g_sid);
+        }
+    }
+    return $g_sid;
+}
+function is_already_uploaded($upload_entry)
+{
+    $all = get_setup();
+    foreach($all['uploads'] as $existing) {
+        if ($upload_entry['md5'] == $existing['md5']) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function append_to_uploads($entry, $tmp_file)
+{
+    // add system information
+    $entry['uploaded']      = time();
+    $entry['request']       = $_SERVER;
+    $entry['original_name'] = $entry['name'];
+    $entry['session']       = get_session_id();
+
+    $safe_name = safe_file_name($entry['name']);
+    $entry['name'] = $safe_name;
+    $n = 1;
+    while(file_exists($entry['name'])) {
+        // make filename unique
+        $entry['name'] = $n . '_' . $safe_name;
+        $n++;
+    }
+
+    rename($tmp_file, get_storage_folder() . '/' . $entry['name']);
+    
+    $setup = get_setup();
+    $setup['uploads'][ $entry['uploaded'] ] = $entry;
+    save_setup($setup);
+
+}
+
+function get_setup_file_name()
+{
+    return get_storage_folder() . '/setup.serialized';
+}
+
+function get_setup()
+{
+    $ser = @file_get_contents(get_setup_file_name());
+    return $ser ? unserialize($ser) : get_default_setup();
+}
+
+function get_default_setup()
+{
+    return array(
+        'title' => 'tiny file <strong>dropbox</strong>',
+        'password' => 'master',
+        'custom_stylesheet' => null,
+        'uploads' => array(),
+    );
+}
+
+function save_setup($all)
+{
+    return @file_put_contents(get_setup_file_name(), serialize($all));
+}
+
+function get_tmp_upload_name()
+{
+    $session_id = get_session_id();
+    $storage = get_storage_folder();
+    return $storage . '/' . $session_id . '.tmp';
+}
+function remove_stale_upload()
+{
+    $file_name = get_tmp_upload_name();
+    @unlink($file_name);
+}
 #
 # /// global, generic functions
 #
 function get_upload_limit()
 {
     // more like guessing
-    
+
     $upload_max_filesize = bytes_from_shorthand(ini_get('upload_max_filesize'));
     $memory_limit = bytes_from_shorthand(ini_get('memory_limit'));
     if (function_exists('memory_get_usage')) {
@@ -380,16 +510,6 @@ function bytes_from_shorthand($ini_shorthand)
     }
     return $converted;
 }
-function get_setting($name, $default = null)
-{
-    global $settings;
-    if ( ! isset($settings[$name]) or ! $settings[$name]) {
-        return $default;
-    }
-    return $settings[$name];
-}
-
-
 function get($name)
 {
     $value = isset($_GET[$name]) ? $_GET[$name] : null;
@@ -415,4 +535,154 @@ function get_site_error()
         return implode("\n<br />", $g_error);
     }
 }
+
+
+# build a printable name from (latvian) text
+# undecoded symbols are replaced with underscore
+# utf-8 safe
+function safe_name($text, $use_visual_mode = false)
+{
+
+    if ( ! $text) return '';
+
+    $text = strtolower_utf($text);
+    $translation_table = array(
+        'ā' => 'a',
+        'č' => 'c',
+        'ē' => 'e',
+        'ģ' => 'g',
+        'ī' => 'i',
+        'ķ' => 'k',
+        'ļ' => 'l',
+        'ņ' => 'n',
+        'ō' => 'o',
+        'š' => 's',
+        'ū' => 'u',
+        'ž' => 'z',
+        'а' => 'a',
+        'б' => 'b',
+        'в' => $use_visual_mode ? 'b' : 'v',
+        'г' => 'g',
+        'д' => $use_visual_mode ? 'g' : 'd',
+        'е' => 'e',
+        'ё' => 'e',
+        'ж' => 'z',
+        'з' => $use_visual_mode ? '3' : 'z',
+        'и' => $use_visual_mode ? 'u' : 'i',
+        'й' => 'j',
+        'к' => 'k',
+        'л' => 'l',
+        'м' => 'm',
+        'н' => $use_visual_mode ? 'h' : 'n',
+        'о' => 'o',
+        'п' => 'p',
+        'р' => $use_visual_mode ? 'p' : 'r',
+        'с' => $use_visual_mode ? 'c' : 's',
+        'т' => 't',
+        'у' => $use_visual_mode ? 'y' : 'u',
+        'ф' => 'f',
+        'х' => $use_visual_mode ? 'x' : 'h',
+        'ц' => 'c',
+        'ч' => 'c',
+        'ш' => 's',
+        'щ' => 's',
+        'ъ' => '',
+        'ы' => 'i',
+        'ь' => '',
+        'э' => 'e',
+        'ю' => 'u',
+        'я' => 'j',
+
+        // ukrainian support
+        'ґ' => 'g',
+        'і' => 'i',
+        'ї' => 'i',
+        'є' => 'e',
+    );
+    $text = strtr($text, $translation_table);
+    $allowed_chars = 'abcdefghijklmnopqrstuvwxyz01234567890_';
+    $out = '';
+    for($i = 0 ; $i < strlen_utf($text) ; $i++) {
+        $char = substr_utf($text, $i, 1);
+        if (strlen($char) != 1) {
+            $out .= '_';
+        } else {
+            if (strpos($allowed_chars, $char) !== FALSE) {
+                $out .= $char;
+            } else {
+                $out .= '_';
+            }
+        }
+    }
+
+    $out = trim($out, '_');
+    $out = preg_replace('/__+/u', '_', $out);
+    $out = preg_replace('/--+/u', '-', $out);
+    if ($out == '') $out = '_';
+
+    return $out;
+}
+
+function safe_file_name($file_name, $force_extension = null)
+{
+    if (strpos($file_name, '.') === false) {
+        $file_name .= '.';
+}
+if (($slash_pos = strrpos($file_name, '/')) !== false) {
+    $file_name = substr($file_name, $slash_pos + 1);
+}
+if ($force_extension === null) {
+    $force_extension = '.' . safe_name(substr($file_name, strrpos($file_name, '.') + 1));
+} else {
+    if ($force_extension != '') {
+        $force_extension = '.' . $force_extension;
+    }
+}
+$f = substr($file_name, 0, strrpos($file_name, '.'));
+$out = rtrim(safe_name($f) . $force_extension, '.');
+return $out ? $out : Null;
+}
+
+//
+// !!! utf-8 support
+//
+if (function_exists('mb_convert_case')) {
+    function strtoupper_utf($str) {
+        return mb_convert_case($str, MB_CASE_UPPER, 'UTF-8');
+}
+function strtolower_utf($str) {
+    return mb_convert_case($str, MB_CASE_LOWER, 'UTF-8');
+}
+function strlen_utf($str) {
+    return mb_strlen($str, 'UTF-8');
+}
+function substr_utf($str, $from, $to) {
+    return mb_substr($str, $from, $to, 'UTF-8');
+}
+
+} else {
+    function strtoupper_utf($str) {
+        return strtoupper($str);
+}
+function strtolower_utf($str) {
+    return strtolower($str);
+}
+function strlen_utf($str) {
+    return strlen($str);
+}
+function substr_utf($str, $from, $to) {
+    return substr($str, $from, $to);
+}
+}
+
+///
+///
+/// main
+///
+///
+
+get_session_id();
+process_action(get('action'));
+
+
 
