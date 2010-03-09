@@ -1352,13 +1352,38 @@ function bytes_from_shorthand($ini_shorthand)
     }
     return $converted;
 }
+function remove_magic_quotes($force_execution = false)
+{
+    if (get_magic_quotes_gpc() or $force_execution) {
+
+        function walk_stripslashes(&$what)
+        {
+            if (is_array($what)) {
+                array_walk($what, 'walk_stripslashes');
+            } else {
+                $what = stripslashes($what);
+            }
+        }
+
+        if (is_array($_GET)) {
+            array_walk($_GET, 'walk_stripslashes');
+        }
+        if (is_array($_POST)) {
+            array_walk($_POST, 'walk_stripslashes');
+        }
+        if (is_array($_COOKIE)) {
+            array_walk($_COOKIE, 'walk_stripslashes');
+        }
+
+    }
+}
+
 function get($name)
 {
     $value = isset($_GET[$name]) ? $_GET[$name] : null;
     $value = ($value === Null and isset($_POST[$name])) ? $_POST[$name] : $value;
     return $value === Null ? Null : trim($value);
 }
-
 
 function get_int($name)
 {
@@ -1569,6 +1594,7 @@ if (function_exists('mb_convert_case')) {
 
 error_reporting(E_ALL);
 ini_set('display_errors', 'on');
+remove_magic_quotes();
 init_session();
 init_default_languages();
 process_action(get('action'));
