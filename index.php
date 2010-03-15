@@ -4,8 +4,8 @@
  * 
  * Tiny dropbox script
  * -------------------
- * Written by Einar Lielmanis, http://dropbox.bugpipe.org/
- * Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php 
+ * Written by Einar Lielmanis
+ * Released under the MIT license: http://www.opensource.org/licenses/mit-license.php 
  * Hack away! Bugs, thanks, suggestions: einar@bugpipe.org
  *
  * Requirements
