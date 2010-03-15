@@ -5,7 +5,8 @@
  * Tiny dropbox script
  * -------------------
  * Written by Einar Lielmanis, http://dropbox.bugpipe.org/
- * Bugs, thanks, suggestions: einar@spicausis.lv
+ * Licensed under the MIT license: http://www.opensource.org/licenses/mit-license.php 
+ * Hack away! Bugs, thanks, suggestions: einar@bugpipe.org
  *
  * Requirements
  *
@@ -35,11 +36,17 @@
  * You can add your own interface languages (via add_language() function) or change the upload folder from the 
  * custom.php: everything else can be done from the owner settings page.
  *
+ * PHP upload limits
+ *
+ * These values in php.ini limit how large files you will be able to upload:
+ *
+ *   upload_max_filesize
+ *   post_max_filesize
+ *   memory_limit
+ *
  **/
 
 # todo:
-# - disallow empty files
-# - allow owner upload
 # - max.limit
 # - password for uploading
 # - simplify multiple files
@@ -284,10 +291,20 @@ p.success a {
 }
 .config button {
     margin-left: 150px;
+    font-weight: bold;
 }
 .config #i_password {
     color: #777;
     font-style: italic;
+}
+.config p {
+    margin-left: 150px;
+    color: #777;
+    font-size: 12px;
+    margin-bottom: 12px;
+}
+.config h2 {
+    margin: 20px 0 12px 150px;;
 }
 CSS;
     exit;
@@ -328,17 +345,20 @@ function on_page_index()
 
     remove_stale_upload();
 
+    $show_upload_form = get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0;
 
-    if ( ! is_owner_mode()) {
-        if (get('action') == 'upload' || get('action') == 'show-form' || sizeof(get_visible_uploads()) == 0) {
+    if ($show_upload_form) {
 
-            if (sizeof(get_visible_uploads()) == 0) {
-                draw_introduction();
-            }
+        if (sizeof(get_visible_uploads()) == 0) {
+            draw_introduction();
+        }
 
-            draw_upload_form();
-        } else {
+        draw_upload_form();
+    } else {
+        if ( ! is_owner_mode()) {
             draw_success_box();
+        } else {
+            draw_owner_box();
         }
     }
 
@@ -358,6 +378,9 @@ function on_config()
     $setup = get_setup();
 
     if (get('save')) {
+
+        $redirect_to = '?';
+
         $password = get('password');
         if ($password) {
             $setup['password'] = $password;
@@ -371,16 +394,21 @@ function on_config()
         $introduction = get('introduction');
         $setup['introduction'] = $introduction;
 
-        $css = get('custom_stylesheet');
-        $setup['custom_stylesheet'] = $css;
+        $storage_limit_mb = get('storage_limit_mb');
+        $storage_limit_mb = str_replace(',', '.', $storage_limit_mb);
+        $setup['storage-limit-mb'] = $storage_limit_mb > 0 ? (float)$storage_limit_mb : null;
+
+        $css_customizations = get('css_customizations');
+        $setup['css-customizations'] = $css_customizations;
 
         $language = get('language');
-        if (isset($g_languages[$language])) {
+        if (isset($g_languages[$language]) && $language != $setup['language']) {
             $setup['language'] = $language;
+            $redirect_to = '?action=config';
         }
 
         save_setup($setup);
-        redirect('?');
+        redirect($redirect_to);
     }
 
     draw_html_header();
@@ -392,8 +420,9 @@ function on_config()
 
     echo '<input type="hidden" name="action" value="config" />';
     echo '<input type="hidden" name="save" value="yes" />';
+
     printf('<label for="i_password">%s</label><input id="i_password" name="password" value="%s" /><br />', 
-        t('LABEL_CONFIG_PASSWORD'), $setup['password'] == 'master' ? 'master' : null);
+        t('LABEL_CFG_PASSWORD'), $setup['password'] == 'master' ? 'master' : null);
 
     $title = $setup['title'];
     if ( ! $title) {
@@ -407,14 +436,14 @@ function on_config()
     }
 
     printf('<label for="i_title">%s</label><input id="i_title" name="title" value="%s" /><br />',
-        t('LABEL_CONFIG_TITLE'),
+        t('LABEL_CFG_TITLE'),
         htmlspecialchars($title));
 
     printf('<label for="i_intro">%s</label><textarea id="i_introduction" rows="5" cols="40" name="introduction">%s</textarea><br />',
-        t('LABEL_CONFIG_INTRODUCTION'),
+        t('LABEL_CFG_INTRODUCTION'),
         htmlspecialchars($introduction));
 
-    printf('<label for="i_language">%s</label>', t('LABEL_CONFIG_LANGUAGE'));
+    printf('<label for="i_language">%s</label>', t('LABEL_CFG_LANGUAGE'));
     echo '<select name="language" id="i_language">';
     foreach($g_languages as $id => $language) {
         $parsed = parse_language($language);
@@ -425,9 +454,16 @@ function on_config()
     }
     echo '</select><br />';
 
-    printf('<label for="i_css">%s</label><input id="i_css" name="custom_stylesheet" value="%s" /><br />',
-        t('LABEL_CONFIG_CSS'),
-        htmlspecialchars($setup['custom_stylesheet']));
+
+    printf('<label for="i_limit">%s</label><input id="i_limit" name="storage_limit_mb" value="%s" style="width: 50px" /><br />',
+        t('LABEL_CFG_STORAGE_LIMIT'),
+        htmlspecialchars($setup['storage-limit-mb']));
+    printf('<p>' . t('HINT_CFG_STORAGE_LIMIT') . '</p>', get_size_of_storage_bytes() / 1000000);
+
+    printf('<label for="i_css_customizations">%s</label><textarea id="i_css_customizations" name="css_customizations">%s</textarea><br />',
+        t('LABEL_CFG_CUSTOM_CSS'),
+        htmlspecialchars($setup['css-customizations']));
+    printf('<p>' . t('HINT_CFG_CUSTOM_CSS') . '</p>', get_size_of_storage_bytes() / 1000000);
 
     printf('<button type="submit">%s</button>', t('BUTTON_CONFIG_SAVE'));
     echo '</form>';
@@ -464,11 +500,20 @@ function on_upload()
         }
     }
 
-    $tmp_file = get_tmp_upload_name();
+    if ($file['size'] == 0) {
+        draw_index_with_error(t('ERR_EMPTY'));
+    }
 
+    $tmp_file = get_tmp_upload_name();
     $move_res = @move_uploaded_file($file['tmp_name'], $tmp_file);
     if ( ! $move_res) {
         draw_index_with_error(t('ERR_CANNOT_MOVE', $move_res));
+    }
+
+    $soft_limit = get_storage_limit_bytes();
+    if ($soft_limit && get_size_of_storage_bytes() + $file['size'] > $soft_limit) {
+        @unlink($tmp_file);
+        draw_index_with_error(t('ERR_TOO_BIG'));
     }
 
     $entry = array(
@@ -745,7 +790,7 @@ function draw_html_header()
 
     printf('<title>%s</title>', strip_tags($title));
 
-    draw_stylesheets();
+    draw_stylesheet();
 
     echo '</head>';
     echo '<body>';
@@ -774,17 +819,17 @@ function draw_html_footer()
 }
 
 
-function draw_stylesheets()
+function draw_stylesheet()
 {
+    $setup = get_setup();
+
     $stylesheet = '?action=default_stylesheet&amp;time=' . date('Y_m_d-H_i', filemtime(__FILE__));
 
-    $setup = get_setup();
-    if ($setup['custom_stylesheet']) {
-        $stylesheet = $setup['custom_stylesheet'];
-    }
+    printf('<link rel="stylesheet" href="%s" media="all" />', $stylesheet);
 
-    if ($stylesheet) {
-        printf('<link rel="stylesheet" href="%s" media="all" />', $stylesheet);
+    $custom_css = $setup['css-customizations'];
+    if ($custom_css) {
+        printf('<style type="text/css" media="all">%s</style>', $custom_css);
     }
 
 }
@@ -881,6 +926,14 @@ function draw_success_box()
     echo '</p>';
 }
 
+function draw_owner_box()
+{
+    draw_site_error();
+    echo '<p class="success">';
+    printf(' <a href="?action=show-form">%s</a>', t('LINK_OWNER_UPLOAD'));
+    echo '</p>';
+}
+
 function draw_upload_form()
 {
     echo '<div class="file form">';
@@ -891,19 +944,28 @@ function draw_upload_form()
         $limit_text = t('UPLOAD_LIMIT', $limit / 1000000.0);
         $limit_text = " <em>$limit_text</em>";
     }
+
+    $storage_limit = get_storage_limit_bytes();
+    $storage_taken = get_size_of_storage_bytes();
+    if ($storage_taken > $storage_limit) {
+        set_error(t('ERR_STORAGE_EXCEEDED'));
+    }
+
     printf('<h2>%s %s</h2>', t('UPLOAD_YOUR_FILE'), $limit_text);
 
     draw_site_error();
 
-    echo '<form enctype="multipart/form-data" method="post" action="?">';
+    if ($storage_taken <= $storage_limit) {
+        echo '<form enctype="multipart/form-data" method="post" action="?">';
 
-    echo '<input type="hidden" name="action" value="upload" />';
-    echo '<input name="file" type="file" /><br />';
-    printf('<label for="description" id="description">%s</label>', t('LABEL_DESCRIPTION'));
-    printf('<textarea rows="5" cols="40" name="description">%s</textarea><br />', htmlspecialchars(get('description')));
-    printf('<button type="submit">%s</button>', t('BUTTON_UPLOAD'));
+        echo '<input type="hidden" name="action" value="upload" />';
+        echo '<input name="file" type="file" /><br />';
+        printf('<label for="description" id="description">%s</label>', t('LABEL_DESCRIPTION'));
+        printf('<textarea rows="5" cols="40" name="description">%s</textarea><br />', htmlspecialchars(get('description')));
+        printf('<button type="submit">%s</button>', t('BUTTON_UPLOAD'));
 
-    echo '</form>';
+        echo '</form>';
+    }
 
     echo '</div>';
 }
@@ -920,78 +982,55 @@ function draw_site_error()
 function draw_visible_uploads()
 {
     $all = get_visible_uploads();
-    if (is_owner_mode()) {
-        foreach($all as $id=>$entry) {
 
-            echo '<div class="file">';
+    foreach($all as $id=>$entry) {
 
-            echo '<ul>';
+        echo '<div class="file">';
+
+        echo '<ul>';
+
+        if (is_owner_mode()) {
             printf('<li>%s, %s</li>', 
                 $entry['request']['REMOTE_ADDR'],
                 date('d.m.Y H:i', $entry['uploaded'])
             );
-            printf('<li><a class="delete" href="%s">%s</a></li>', '?action=delete&amp;id=' . $id, t('LINK_ERASE'));
-            echo '</ul>';
+        }
+        if ($entry['description']) {
+            printf('<li><a href="%s">%s</a></li>', '?id=' . $id, t('LINK_EDIT_DESCRIPTION'));
+        } else {
+            printf('<li><a href="%s">%s</a></li>', '?id=' . $id, t('LINK_ADD_DESCRIPTION'));
+        }
+        printf('<li><a class="delete" href="%s">%s</a></li>', '?action=delete&amp;id=' . $id, t('LINK_ERASE'));
+        echo '</ul>';
 
-            printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
-                '?action=download&amp;id=' . $id,
-                htmlspecialchars($entry['original_name']),
-                format_size($entry['size'])
-            );
+        printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
+            '?action=download&amp;id=' . $id,
+            htmlspecialchars($entry['original_name']),
+            format_size($entry['size'])
+        );
+
+        if (get_int('id') == $id) {
+            // draw editable form
+            echo '<form method="post" action="?">';
+            printf('<input type="hidden" name="action" value="save-edit" />');
+            printf('<input type="hidden" name="id" value="%s" />', $id);
+            printf('<textarea rows="5" cols="40" name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
+            printf('<button type="submit">%s</button>', t('BUTTON_SAVE_EDIT'));
+            echo '</form>';
+            js_focus_to('upload-description');
+        } else {
             if ($entry['description']) {
-                echo '<div class="description">';
-                echo nl2br(htmlspecialchars($entry['description']));
-                echo '</div>';
+                printf('<div class="description">%s</div>',
+                    nl2br(htmlspecialchars($entry['description'])));
             }
-
-            echo '</div>';
         }
 
-        if ( ! sizeof($all)) {
-
+        if (is_owner_mode() and ! sizeof($all)) {
             printf('<div class="file"><h2>%s</h2></div>', t('NO_FILES'));
-
         }
 
-    } else {
-        foreach($all as $id=>$entry) {
+        echo '</div>';
 
-            echo '<div class="file">';
-
-            echo '<ul>';
-            if ($entry['description']) {
-                printf('<li><a href="%s">%s</a></li>', '?id=' . $id, t('LINK_EDIT_DESCRIPTION'));
-            } else {
-                printf('<li><a href="%s">%s</a></li>', '?id=' . $id, t('LINK_ADD_DESCRIPTION'));
-            }
-            printf('<li><a class="delete" href="%s">%s</a></li>', '?action=delete&amp;id=' . $id, t('LINK_ERASE'));
-            echo '</ul>';
-
-            printf('<h2><a href="%s">%s</a> <em>%s</em></h2>',
-                '?action=download&amp;id=' . $id,
-                htmlspecialchars($entry['original_name']),
-                format_size($entry['size'])
-            );
-
-            if (get_int('id') == $id) {
-                // draw editable form
-                echo '<form method="post" action="?">';
-                printf('<input type="hidden" name="action" value="save-edit" />');
-                printf('<input type="hidden" name="id" value="%s" />', $id);
-                printf('<textarea rows="5" cols="40" name="description" id="upload-description">%s</textarea>', htmlspecialchars($entry['description']));
-                printf('<button type="submit">%s</button>', t('BUTTON_SAVE_EDIT'));
-                echo '</form>';
-                js_focus_to('upload-description');
-            } else {
-                if ($entry['description']) {
-                    printf('<div class="description">%s</div>',
-                        nl2br(htmlspecialchars($entry['description'])));
-                }
-            }
-
-            echo '</div>';
-
-        }
     }
 }
 function draw_index_with_error($error /*, ...*/)
@@ -1109,24 +1148,22 @@ function get_setup()
     $ser = @file_get_contents(get_setup_file_name());
     $setup = @unserialize($ser);
     if ($setup === false) {
-        $setup = get_default_setup();
+        $setup = array();
     }
+    array_set_default($setup, 'title', null);
+    array_set_default($setup, 'password', 'master');
+    array_set_default($setup, 'custom-stylesheet', null);
+    array_set_default($setup, 'css-customizations', null);
+    array_set_default($setup, 'introduction', null);
+    array_set_default($setup, 'uploads', array());
+    array_set_default($setup, 'storage-limit-mb', null);
+    array_set_default($setup, 'language', 'en');
+    array_set_default($setup, 'owner-session', get_session_id());
+    array_set_default($setup, 'owner-ip', $_SERVER['REMOTE_ADDR']);
+
     return $setup;
 }
 
-function get_default_setup()
-{
-    return array(
-        'title' => null,
-        'password' => 'master',
-        'custom_stylesheet' => null,
-        'introduction' => null,
-        'uploads' => array(),
-        'language' => 'en',
-        'owner-session' => get_session_id(),
-        'owner-ip' => $_SERVER['REMOTE_ADDR'],
-    );
-}
 
 function save_setup($all)
 {
@@ -1144,10 +1181,15 @@ function remove_stale_upload()
     $file_name = get_tmp_upload_name();
     @unlink($file_name);
 }
-function get_visible_uploads()
+function get_all_uploads()
 {
     $setup = get_setup();
-    $all = $setup['uploads'];
+    return $setup['uploads'];
+}
+
+function get_visible_uploads()
+{
+    $all = get_all_uploads();
     if (is_owner_mode()) {
         return $all;
     } else {
@@ -1176,6 +1218,38 @@ function safely_get_file_entry($id)
     }
     return $visible[$id];
 }
+function get_storage_limit_bytes()
+{
+    $setup = get_setup();
+    $limit_mb = isset($setup['storage-limit-mb']) && $setup['storage-limit-mb'] ? $setup['storage-limit-mb'] : null;
+    if ($limit_mb) {
+        return $limit_mb * 1000000;
+    }
+}
+
+function get_size_of_storage_bytes()
+{
+    // nonrecursive. the subfolders
+    $uploads = get_all_uploads();
+    $total_bytes = 0;
+    foreach($uploads as $upload) {
+        $total_bytes += @filesize(get_storage_folder() . '/' . $upload['name']);
+    }
+    return $total_bytes;
+}
+function get_upload_limit()
+{
+    if (get_storage_limit_bytes()) {
+        $soft_limit = get_storage_limit_bytes() - get_size_of_storage_bytes();
+        if ($soft_limit > 0) {
+            return min($soft_limit, get_php_upload_limit());
+        } else {
+            return 0; // space exceeded probably
+        }
+    }
+
+    return get_php_upload_limit();
+}
 #
 # /// languages and internationalization support
 #
@@ -1188,7 +1262,7 @@ function get_site_language()
 function init_default_languages()
 {
     $lv = <<<LANG
-LANGUAGE                  latviešu
+LANGUAGE                  Latviešu
 FOOTER                    Veidojis <a href="http://spicausis.lv/">Einārs Lielmanis</a>, krāsu gamma un grafiskie elementi: <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.
 CHANGE_SETTINGS           Mainīt iestatījumus
 OWNER_TITLE               pārvaldīšana
@@ -1201,6 +1275,7 @@ BUTTON_LOGIN              Autorizēties
 SUCCESS_SINGLE            Paldies, fails ir saņemts.
 SUCCESS_MULTIPLE          Paldies, faili ir saņemti.
 LINK_ADD_MORE             Vai vēlies nosūtīt vēl kādu failu?
+LINK_OWNER_UPLOAD         Vai vēlies pievienot kādu failu?
 UPLOAD_LIMIT              %d MB ierobežojums
 UPLOAD_YOUR_FILE          <strong>Pievieno</strong> savu failu:
 LABEL_DESCRIPTION         Vieta nelielam aprakstam:
@@ -1216,21 +1291,26 @@ ERR_WRITE_FAILED          Neizdevās izveidot failu <strong>%s</strong>. Lūdzu,
 ERR_NO_FILE               <strong>Nav</strong> šāda faila.
 DEFAULT_TITLE             failu <strong>pastkastīte</strong>
 DEFAULT_INTRODUCTION      Izmantojot šo lapu, vari nosūtīt man savus failus.
-LABEL_CONFIG_PASSWORD     Jaunā parole:
-LABEL_CONFIG_TITLE        Lapas virsraksts:
-LABEL_CONFIG_INTRODUCTION Lapas ievadteksts:
-LABEL_CONFIG_CSS          Ārējā css saite:
-LABEL_CONFIG_LANGUAGE     Lapas valoda:
+LABEL_CFG_PASSWORD        Jaunā parole:
+LABEL_CFG_TITLE           Lapas virsraksts:
+LABEL_CFG_INTRODUCTION    Lapas ievadteksts:
+LABEL_CFG_CUSTOM_CSS      Manuāli CSS pielāgojumi:
+LABEL_CFG_LANGUAGE        Lapas valoda:
+LABEL_CFG_STORAGE_LIMIT   Failiem atvēlētā vieta, MB
+HINT_CFG_STORAGE_LIMIT    Cik vietas, megabaitos, atvēlēt failu krātuvei.<br />Šobrīd faili aizņem <strong>%.1f MB</strong>.
+HINT_CFG_CUSTOM_CSS       CSS ir tehnoloģija, ar ko ir iespējams izmainīt lapas izskatu.<br />Piemēram, "body { background: red }" visai lapai piešķirs sarkanu fona krāsu.
 BUTTON_CONFIG_SAVE        Saglabāt izmaiņas
 ERR_NO_UPLOAD             Lūdzu, pievieno pašu failu.
 ERR_TOO_BIG               Fails saņemts <strong>kļūdaini</strong>. Iespējams, ka tas ir <strong>par lielu?</strong>
 ERR_BAD_UPLOAD            Fails saņemts <strong>kļūdaini</strong>.
 ERR_CANNOT_MOVE           Nevaru pārvietot ielādēto failu uz <strong>%s</strong>.
 ERR_DUPLICATE             Šāds fails te <strong>jau ir ielādēts</strong>, paldies.
+ERR_EMPTY                 Ielādētais fails ir tukšs.
+ERR_STORAGE_EXCEEDED      Diemžēl, pastkastītei ir beigusies atvēlētā diska vieta.
 LANG;
 
     $en = <<<LANG
-LANGUAGE                  english
+LANGUAGE                  English
 FOOTER                    Written by <a href="http://bugpipe.org/">Einar Lielmanis</a>, color scheme and images by <a href="http://www.colourlovers.com/lover/doc%20w">doc w</a>.
 CHANGE_SETTINGS           Change settings
 OWNER_TITLE               owner mode
@@ -1243,6 +1323,7 @@ BUTTON_LOGIN              Login
 SUCCESS_SINGLE            Thank you, your file is received.
 SUCCESS_MULTIPLE          Thank you, your files are received.
 LINK_ADD_MORE             Would you like to send another file?
+LINK_OWNER_UPLOAD         Would you like to upload a file?
 UPLOAD_LIMIT              %d MB limit
 UPLOAD_YOUR_FILE          <strong>Upload</strong> your file:
 LABEL_DESCRIPTION         You can add a short description:
@@ -1258,17 +1339,23 @@ ERR_WRITE_FAILED          Writing to a file <strong>«%s»</strong> failed. Plea
 ERR_NO_FILE               No such file.
 DEFAULT_TITLE             tiny <strong>file dropbox</strong>
 DEFAULT_INTRODUCTION      Using this page, you can easily send me various files.
-LABEL_CONFIG_PASSWORD     New password:
-LABEL_CONFIG_TITLE        Page title:
-LABEL_CONFIG_INTRODUCTION Page introduction:
-LABEL_CONFIG_CSS          External stylesheet URL:
-LABEL_CONFIG_LANGUAGE     Site language:
+LABEL_CFG_PASSWORD        New password:
+LABEL_CFG_TITLE           Page title:
+LABEL_CFG_INTRODUCTION    Page introduction:
+LABEL_CFG_LANGUAGE        Site language:
+LABEL_CFG_STORAGE_LIMIT   Storage limit, MB:
+LABEL_CFG_CUSTOM_CSS      Custom CSS overrides:
+HINT_CFG_CUSTOM_CSS       CSS is a technology which allows to change how the page looks.<br />As an example, specifying "body { background: red }" will make the background of the page turn red.
+HINT_CFG_STORAGE_LIMIT    Maximum storage space, in megabytes, that the uploaded files may use.<br />Currently using <strong>%.1f MB</strong>.
+BUTTON_CONFIG_SAVE        Saglabāt izmaiņas
 BUTTON_CONFIG_SAVE        Save changes
 ERR_NO_UPLOAD             You haven't attached any file.
 ERR_TOO_BIG               There was a <strong>problem</strong> receiving your file. It is possible that it was <strong>too big</strong> for the server limits.
 ERR_BAD_UPLOAD            There was a <strong>problem</strong> receiving your file.
 ERR_CANNOT_MOVE           Cannot move the uploaded file to <strong>%s</strong>.
 ERR_DUPLICATE             This file is <strong>already uploaded</strong>, thank you.
+ERR_EMPTY                 The uploaded file is empty.
+ERR_STORAGE_EXCEEDED      Sadly, the storage space is full.
 LANG;
 
     add_language('lv', $lv);
@@ -1321,7 +1408,6 @@ function t($tag /* ... */)
 
 }
 
-
 #
 # /// global, generic functions
 #
@@ -1344,11 +1430,14 @@ function format_size($bytes)
     }
     return sprintf('%.1f MB', $bytes / 1000000);
 }
-function get_upload_limit()
+function get_php_upload_limit()
 {
     // more like guessing
 
     $upload_max_filesize = bytes_from_shorthand(ini_get('upload_max_filesize'));
+    $post_max_size = bytes_from_shorthand(ini_get('post_max_size'));
+    $upload_max_filesize = min($upload_max_filesize, $post_max_size);
+
     $memory_limit = bytes_from_shorthand(ini_get('memory_limit'));
     if (function_exists('memory_get_usage')) {
         $memory_limit -= memory_get_usage();
@@ -1357,6 +1446,8 @@ function get_upload_limit()
     if ($memory_limit && $memory_limit < $limit) {
         $limit = $memory_limit;
     }
+
+
     return $limit ? $limit : null;
 }
 
@@ -1429,6 +1520,12 @@ function get_error()
     global $g_error;
     if ($g_error) {
         return implode("\n<br />", $g_error);
+    }
+}
+function array_set_default(&$array, $key, $default = null)
+{
+    if ( ! array_key_exists($key, $array)) {
+        $array[$key] = $default;
     }
 }
 
@@ -1618,10 +1715,13 @@ if (function_exists('mb_convert_case')) {
 
 error_reporting(E_ALL);
 ini_set('display_errors', 'on');
+ini_set('upload_max_filesize', '700M');
 remove_magic_quotes();
 init_session();
 init_default_languages();
 process_action(get('action'));
 
 
+# phpFolding plugin _most_ recommended, http://www.vim.org/scripts/script.php?script_id=1623
+# vim: set tw=120 ts=4 sts=4 sw=4 et : #
 
