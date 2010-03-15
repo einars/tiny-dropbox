@@ -1715,7 +1715,6 @@ if (function_exists('mb_convert_case')) {
 
 error_reporting(E_ALL);
 ini_set('display_errors', 'on');
-ini_set('upload_max_filesize', '700M');
 remove_magic_quotes();
 init_session();
 init_default_languages();
