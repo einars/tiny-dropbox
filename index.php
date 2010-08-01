@@ -1,11 +1,11 @@
 <?php
 
 /**
- * 
+ *
  * Tiny dropbox script
  * -------------------
  * Written by Einar Lielmanis
- * Released under the MIT license: http://www.opensource.org/licenses/mit-license.php 
+ * Released under the MIT license: http://www.opensource.org/licenses/mit-license.php
  * Hack away! Bugs, thanks, suggestions: einar@bugpipe.org
  *
  * Requirements
@@ -19,7 +19,7 @@
  * By visiting the page the first time, you will automatically be logged in as owner
  * and will be able to customize language, password, etc.
  *
- * If the script is unable to create the storage folder by itself, it will complain; in that case you will need to 
+ * If the script is unable to create the storage folder by itself, it will complain; in that case you will need to
  * create the folder "files" and assign sufficient permissions manually.
  *
  *
@@ -33,7 +33,7 @@
      $g_storage_folder = '/var/storage';
      ?>
 
- * You can add your own interface languages (via add_language() function) or change the upload folder from the 
+ * You can add your own interface languages (via add_language() function) or change the upload folder from the
  * custom.php: everything else can be done from the owner settings page.
  *
  * PHP upload limits
@@ -60,7 +60,7 @@ if (file_exists('config.php')) {
 
 #
 # /// page actions
-# 
+#
 function process_action($action)
 {
     $handlers = array(
@@ -102,7 +102,7 @@ function on_default_stylesheet()
     etag_last_modified(filemtime(__FILE__));
 
     echo <<<CSS
-* { 
+* {
     margin: 0;
     padding: 0;
 }
@@ -421,7 +421,7 @@ function on_config()
     echo '<input type="hidden" name="action" value="config" />';
     echo '<input type="hidden" name="save" value="yes" />';
 
-    printf('<label for="i_password">%s</label><input id="i_password" name="password" value="%s" /><br />', 
+    printf('<label for="i_password">%s</label><input id="i_password" name="password" value="%s" /><br />',
         t('LABEL_CFG_PASSWORD'), $setup['password'] == 'master' ? 'master' : null);
 
     $title = $setup['title'];
@@ -990,7 +990,7 @@ function draw_visible_uploads()
         echo '<ul>';
 
         if (is_owner_mode()) {
-            printf('<li>%s, %s</li>', 
+            printf('<li>%s, %s</li>',
                 $entry['request']['REMOTE_ADDR'],
                 date('d.m.Y H:i', $entry['uploaded'])
             );
