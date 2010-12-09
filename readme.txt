@@ -1,8 +1,9 @@
 Tiny dropbox (not THAT dropbox ;) script
 ----------------------------------------
 Written by Einar Lielmanis.
-Released under the MIT license: http://www.opensource.org/licenses/mit-license.php
-Hack away! Bugs, thanks, suggestions: einar@bugpipe.org
+Released under the MIT license,
+http://www.opensource.org/licenses/mit-license.php
+Hack away! Bugs, thanks, suggestions: einar@spicausis.lv
 
 What is this?
 
