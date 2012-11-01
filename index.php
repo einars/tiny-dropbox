@@ -1043,8 +1043,11 @@ function draw_upload_form()
 
         require_once('in-a-flash/class.FlashUploader.php');
         IAF_display_js();
-        $uploader = new FlashUploader('uploader', 'in-a-flash/uploader', 'http://drop.spicausis.lv/?session_id=' . get_session_id() . '%26action=flash-upload%26');
-        // $uploader = new FlashUploader('uploader', 'in-a-flash/uploader', 'http://drop.spicausis.lv/?action=flash-upload#');
+        $base_url = get('REQUEST_URI', $_SERVER);
+        if (false !== ($pos = strpos($base_url, '?'))) {
+            $base_url = substr($base_url, 0, $pos);
+        }
+        $uploader = new FlashUploader('uploader', 'in-a-flash/uploader',  $base_url . '?action=flash-upload%26session_id=' . get_session_id() . '%26action=flash-upload%26');
         $uploader->set('set_width', '880');
         $uploader->set('valid_extensions', '*.*'); // yes, I know what I'm doing
 
@@ -1670,10 +1673,10 @@ function remove_magic_quotes($force_execution = false)
     }
 }
 
-function get($name)
+function get($name, $array = null)
 {
-    $value = isset($_GET[$name]) ? $_GET[$name] : null;
-    $value = ($value === Null and isset($_POST[$name])) ? $_POST[$name] : $value;
+    if ($array === null) $array = $_REQUEST;
+    $value = isset($array[$name]) ? $array[$name] : null;
     return $value === Null ? Null : trim($value);
 }
 
